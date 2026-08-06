@@ -20,10 +20,23 @@ OCR-Center/
 
 ## ติดตั้ง + รัน
 
+**ทางลัด (Linux/Raspberry Pi — ติดตั้ง + pm2 + auto-start ตอนบูต ครบในคำสั่งเดียว):**
+
+```bash
+git clone https://github.com/Commerry/OCR-Center.git
+cd OCR-Center
+bash install.sh
+```
+
+**หรือรันมือ (ทุก OS รวม Windows):**
+
 ```bash
 npm install
-npm start          # http://localhost:8090
+cp .env.example .env    # Windows: copy .env.example .env
+npm start               # http://localhost:8090
 ```
+
+> เครื่องหลัง proxy โรงงาน: ตั้ง proxy ของ npm ก่อน (`npm config set proxy http://10.201.0.54:8080` + `https-proxy` + `strict-ssl false`) — รายละเอียดดู `docs/UPDATE_GUIDE.md` ใน repo กล้อง
 
 ## เชื่อมกล้องเข้า Center
 
