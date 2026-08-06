@@ -13,7 +13,14 @@ cd "$SCRIPT_DIR"
 echo "Step 1: Checking Node.js..."
 if ! command -v node &> /dev/null; then
     echo "❌ Node.js not found. Install Node.js 18+ first."
-    echo "   (on the camera repo there is a tarball + guide: docs/UPDATE_GUIDE.md)"
+    exit 1
+fi
+NODE_MAJOR=$(node -v | sed 's/^v//' | cut -d. -f1)
+if [ "$NODE_MAJOR" -lt 18 ]; then
+    echo "❌ Node.js $(node -v) is too old - need 18 or newer."
+    echo "   Install on x64 Linux:"
+    echo "   curl -fsSL -o /tmp/node.tar.xz https://nodejs.org/dist/v22.14.0/node-v22.14.0-linux-x64.tar.xz"
+    echo "   sudo tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1"
     exit 1
 fi
 echo "✓ Node $(node -v), npm $(npm -v)"
