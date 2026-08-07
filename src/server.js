@@ -4,34 +4,31 @@ const express = require('express');
 const ingestRoutes = require('./routes/ingest');
 const apiRoutes = require('./routes/api');
 const { prune } = require('./db');
+const auth = require('./auth');
 
 const app = express();
 app.use(express.json({ limit: '10mb' })); // heartbeats can carry webp thumbnails
 
-// Optional basic-auth for the dashboard + dashboard API.
-// Device ingest is NOT behind this (it uses X-Api-Key instead).
-const dashAuth = (req, res, next) => {
-  const user = process.env.DASH_USER || '';
-  const pass = process.env.DASH_PASS || '';
-  if (!user) return next();
-  const header = req.get('Authorization') || '';
-  const [scheme, encoded] = header.split(' ');
-  if (scheme === 'Basic' && encoded) {
-    const [u, p] = Buffer.from(encoded, 'base64').toString().split(':');
-    if (u === user && p === pass) return next();
-  }
-  res.set('WWW-Authenticate', 'Basic realm="OCR Center"');
-  return res.status(401).send('Authentication required');
-};
-
-// Device-facing ingest (X-Api-Key checked inside the route, no basic-auth)
+// Device-facing ingest (X-Api-Key checked inside the route, no login)
 app.use('/api/devices', ingestRoutes);
 
-// Dashboard API
-app.use('/api', dashAuth, apiRoutes);
+// Login page + endpoints (not behind the auth gate)
+app.get('/login', (req, res) => res.sendFile(path.join(__dirname, 'public', 'login.html')));
+app.post('/api/login', auth.login);
+app.post('/api/logout', auth.logout);
+app.get('/api/login-status', (req, res) => res.json({ loginEnabled: auth.loginEnabled() }));
+// site name is public - the login page shows it before you sign in
+app.get('/api/settings', (req, res) => res.json({
+  success: true,
+  settings: {
+    siteName: process.env.SITE_NAME || 'OCR CENTER',
+    siteSubtitle: process.env.SITE_SUBTITLE || 'STA-SK Fleet Monitor',
+  },
+}));
 
-// Dashboard
-app.use('/', dashAuth, express.static(path.join(__dirname, 'public')));
+// Dashboard API + dashboard itself (behind login when DASH_USER is set)
+app.use('/api', auth.requireAuth, apiRoutes);
+app.use('/', auth.requireAuth, express.static(path.join(__dirname, 'public')));
 
 // Hourly retention prune
 setInterval(() => {

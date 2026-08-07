@@ -33,6 +33,9 @@ const deviceSummary = (row) => {
   return {
     deviceId: row.device_id,
     groupId: row.group_id || null,
+    // custom link if set, otherwise the standard camera web UI on its IP
+    webUrl: row.web_url || (row.ip ? `http://${row.ip}:64010` : null),
+    customWebUrl: row.web_url || '',
     hostname: row.hostname,
     ip: row.ip,
     mac: row.mac,
@@ -88,6 +91,25 @@ router.delete('/groups/:id', (req, res) => {
   statements.clearGroupMembers.run(req.params.id); // members go back to Unassigned
   statements.deleteGroup.run(req.params.id);
   res.json({ success: true });
+});
+
+router.get('/settings', (req, res) => {
+  res.json({
+    success: true,
+    settings: {
+      siteName: process.env.SITE_NAME || 'OCR CENTER',
+      siteSubtitle: process.env.SITE_SUBTITLE || 'STA-SK Fleet Monitor',
+    },
+  });
+});
+
+router.post('/devices/:id/web-url', (req, res) => {
+  const url = ((req.body || {}).webUrl || '').trim();
+  if (url && !/^https?:\/\/.+/i.test(url)) {
+    return res.json({ success: false, error: 'URL must start with http:// or https://' });
+  }
+  statements.setDeviceWebUrl.run(url || null, req.params.id);
+  return res.json({ success: true, webUrl: url });
 });
 
 router.delete('/devices/:id', (req, res) => {

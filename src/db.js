@@ -74,6 +74,10 @@ const deviceCols = db.prepare('PRAGMA table_info(devices)').all();
 if (!deviceCols.some((c) => c.name === 'group_id')) {
   db.exec('ALTER TABLE devices ADD COLUMN group_id INTEGER');
 }
+// migration: devices.web_url (override the auto-built http://<ip>:64010 link)
+if (!deviceCols.some((c) => c.name === 'web_url')) {
+  db.exec('ALTER TABLE devices ADD COLUMN web_url TEXT');
+}
 
 const statements = {
   upsertDevice: db.prepare(`
@@ -117,7 +121,8 @@ const statements = {
     VALUES (@device_id, @at, @cpu_temp_c, @load_pct, @ram_free_mb, @disk_used_pct)
   `),
 
-  listDevices: db.prepare(`SELECT device_id, hostname, ip, mac, platform, app_version, first_seen, last_seen, health_json, group_id FROM devices ORDER BY hostname`),
+  listDevices: db.prepare(`SELECT device_id, hostname, ip, mac, platform, app_version, first_seen, last_seen, health_json, group_id, web_url FROM devices ORDER BY hostname`),
+  setDeviceWebUrl: db.prepare(`UPDATE devices SET web_url = ? WHERE device_id = ?`),
 
   listGroups: db.prepare(`SELECT id, name, sort_order FROM groups ORDER BY sort_order, name`),
   createGroup: db.prepare(`INSERT INTO groups (name, sort_order) VALUES (?, ?)`),

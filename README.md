@@ -86,6 +86,26 @@ API: `GET/POST /api/groups`, `PATCH/DELETE /api/groups/:id`, `POST /api/devices/
 
 สเปก payload ฝั่งกล้องอยู่ที่ `OCR-V8.1/src/utils/centralReporter.js`
 
+## ตั้งชื่อเว็บ + Login
+
+ตั้งใน `.env`:
+
+```
+SITE_NAME=PSE OCR CENTER
+SITE_SUBTITLE=Vision Fleet Monitor
+DASH_USER=admin
+DASH_PASS=your-password
+```
+
+- `SITE_NAME` / `SITE_SUBTITLE` — ชื่อที่แสดงบนหัวเว็บ, หน้า login และแท็บเบราว์เซอร์
+- `DASH_USER` / `DASH_PASS` — บัญชีเข้าใช้งาน (เว้น `DASH_USER` ว่าง = ไม่ต้อง login)
+- แก้ `.env` แล้วต้อง `pm2 restart ocr-center`
+
+## URL หน้าเว็บของอุปกรณ์
+
+ปุ่มลิงก์บนการ์ดใช้ `http://<IP ที่กล้องส่งมา>:64010` อัตโนมัติ — แก้เป็น URL อื่นได้รายอุปกรณ์:
+คลิกการ์ด → ปุ่มรูปโซ่ (ข้างปุ่มลบ) → ใส่ URL เต็ม (เว้นว่าง = กลับไปใช้ค่าอัตโนมัติ)
+
 ## ความปลอดภัย
 
 - Dashboard: ตั้ง `DASH_USER`/`DASH_PASS` ใน `.env` เพื่อเปิด basic-auth (ค่าว่าง = ไม่ล็อค)
