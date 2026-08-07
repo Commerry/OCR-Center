@@ -14,6 +14,8 @@ app.use('/api/devices', ingestRoutes);
 
 // Login page + endpoints (not behind the auth gate)
 app.get('/login', (req, res) => res.sendFile(path.join(__dirname, 'public', 'login.html')));
+// images must be public too - the login page shows the logo before sign-in
+app.use('/img', express.static(path.join(__dirname, 'public', 'img')));
 app.post('/api/login', auth.login);
 app.post('/api/logout', auth.logout);
 app.get('/api/login-status', (req, res) => res.json({ loginEnabled: auth.loginEnabled() }));
