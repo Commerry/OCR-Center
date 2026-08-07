@@ -306,6 +306,7 @@
     <symbol id="i-chev" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></symbol>
     <symbol id="i-move" viewBox="0 0 24 24"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></symbol>
     <symbol id="i-folder" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></symbol>
+    <symbol id="i-external" viewBox="0 0 24 24"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></symbol>
   </svg>
 
   <header class="topbar">
@@ -336,7 +337,11 @@
           <div class="panel-title" id="dTitle">-</div>
           <div class="panel-sub" id="dSub">-</div>
         </div>
-        <button class="x-btn" id="dDelete" title="ลบอุปกรณ์ออกจากระบบ" style="margin-left:auto"><svg class="icon"><use href="#i-trash"/></svg></button>
+        <a class="btn grad" id="dOpenWeb" href="#" target="_blank" rel="noopener"
+           style="margin-left:auto;text-decoration:none">
+          <svg class="icon"><use href="#i-external"/></svg> เปิดหน้าเว็บกล้อง
+        </a>
+        <button class="x-btn" id="dDelete" title="ลบอุปกรณ์ออกจากระบบ" style="margin-left:.4rem"><svg class="icon"><use href="#i-trash"/></svg></button>
         <button class="x-btn" style="margin-left:0" onclick="closeDetail()"><svg class="icon"><use href="#i-x"/></svg></button>
       </div>
       <div id="dBody"></div>
@@ -394,6 +399,10 @@
             <div class="card-sub">${esc(d.hostname || '')} &middot; ${esc(d.ip || '?')}</div>
           </div>
           <div class="seen">${fmtAgo(d.lastSeenSec)}</div>
+          ${d.ip ? `<a class="gbtn" href="http://${esc(d.ip)}:64010" target="_blank" rel="noopener"
+             title="เปิดหน้าเว็บกล้อง" onclick="event.stopPropagation()">
+            <svg class="icon"><use href="#i-external"/></svg>
+          </a>` : ''}
           <button class="gbtn" title="ย้ายกลุ่ม" onclick="event.stopPropagation(); openMoveMenu(event, '${esc(d.deviceId)}')">
             <svg class="icon"><use href="#i-move"/></svg>
           </button>
@@ -646,6 +655,14 @@
       document.getElementById('dTitle').textContent = cam.display_name || d.hostname || d.deviceId;
       document.getElementById('dSub').textContent =
         `${groupName} · ${d.hostname || ''} · ${d.ip || '?'} · ${d.mac || ''} · v${d.appVersion || '?'} · last seen ${fmtAgo(d.lastSeenSec)}`;
+
+      const openWeb = document.getElementById('dOpenWeb');
+      if (d.ip) {
+        openWeb.href = `http://${d.ip}:64010`;
+        openWeb.style.display = '';
+      } else {
+        openWeb.style.display = 'none';
+      }
 
       let reads = [];
       try {
