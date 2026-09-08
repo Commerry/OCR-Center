@@ -180,8 +180,8 @@ router.get('/reports/storage', (req, res) => {
   res.json({
     success: true,
     images: statements.imageCount.get().n,
-    sizeMb: imageStore.usageMb(),
     keepDays: parseInt(process.env.IMAGES_KEEP_DAYS, 10) || 30,
+    ...imageStore.stats(),
   });
 });
 

@@ -193,6 +193,7 @@ const statements = {
     VALUES (@device_id, @camera, @value, @confidence, @read_at, @image_at, @file)
   `),
   imagesOlderThan: db.prepare(`SELECT file FROM read_images WHERE image_at < ?`),
+  pruneImageRowsByPrefix: db.prepare(`DELETE FROM read_images WHERE file LIKE ?`),
   pruneImageRows: db.prepare(`DELETE FROM read_images WHERE image_at < ?`),
   imageCount: db.prepare(`SELECT COUNT(*) AS n FROM read_images`),
 
@@ -243,7 +244,11 @@ const ingestHeartbeat = db.transaction((payload) => {
     // One image per heartbeat at most: skip when this image_at was already stored.
     if (cam.lastImage && cam.lastImageAt) {
       const seen = statements.hasImage.get(payload.deviceId, cam.cameraName, cam.lastImageAt);
-      if (!seen) {
+      const wanted = imageStore.shouldStore({
+        value: cam.lastRead ? cam.lastRead.value : null,
+        confidence: cam.lastRead ? cam.lastRead.confidence : null,
+      });
+      if (!seen && wanted) {
         const file = imageStore.saveImage({
           deviceId: payload.deviceId,
           value: cam.lastRead ? cam.lastRead.value : null,
@@ -313,6 +318,24 @@ const reorderGroups = db.transaction((ids) => {
   ids.forEach((id, index) => statements.setGroupOrder.run(index, id));
 });
 
+// Drop the rows of image day-folders that were deleted from disk
+const forgetImageDays = (days) => {
+  for (const prefix of days || []) {
+    statements.pruneImageRowsByPrefix.run(prefix + '/%');
+  }
+};
+
+/**
+ * Keep the image store under IMAGES_MAX_MB by dropping the oldest days.
+ * Runs after ingest (only when already over the cap) and on the hourly prune,
+ * so images can never fill the disk however long the retention is set.
+ */
+const enforceImageCap = () => {
+  const removed = imageStore.enforceCap();
+  if (removed.files) forgetImageDays(removed.days);
+  return removed;
+};
+
 const prune = (readsKeepDays, healthKeepDays, imagesKeepDays) => {
   const cutoff = (days) => new Date(Date.now() - days * 86400000).toISOString();
   const r = statements.pruneReads.run(cutoff(readsKeepDays));
@@ -320,9 +343,12 @@ const prune = (readsKeepDays, healthKeepDays, imagesKeepDays) => {
   let images = 0;
   if (imagesKeepDays && imagesKeepDays > 0) {
     images = statements.pruneImageRows.run(cutoff(imagesKeepDays)).changes;
-    imageStore.pruneImages(imagesKeepDays);
+    forgetImageDays(imageStore.pruneImages(imagesKeepDays).days);
   }
-  return { reads: r.changes, health: h.changes, images };
+  const capped = enforceImageCap();
+  return { reads: r.changes, health: h.changes, images, cappedImages: capped.files };
 };
 
-module.exports = { db, statements, ingestHeartbeat, prune, reorderGroups, deleteDevice };
+module.exports = {
+  db, statements, ingestHeartbeat, prune, reorderGroups, deleteDevice, enforceImageCap,
+};

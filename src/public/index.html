@@ -352,6 +352,7 @@
       </div>
     </div>
     <div class="sum-chips" id="sumChips"></div>
+    <div class="sum-chips" id="storeChips"></div>
     <button class="btn" onclick="openReport()" title="ออกรายงาน CSV พร้อมรูป">
       <svg class="icon"><use href="#i-report"/></svg> Report
     </button>
@@ -625,6 +626,35 @@
       } catch (e) {
         document.getElementById('refreshNote').textContent = 'refresh failed';
       }
+    }
+
+    /* ===== Image storage indicator ===== */
+    async function refreshStorage() {
+      try {
+        const d = await fetch('/api/reports/storage').then(r => r.json());
+        if (!d.success) return;
+        const gb = (mb) => (mb >= 1024 ? (mb / 1024).toFixed(1) + ' GB' : mb + ' MB');
+        const usedPct = d.usedPercentOfCap;
+        let cls = '';
+        if (usedPct !== null && usedPct >= 90) cls = 'err';
+        else if (usedPct !== null && usedPct >= 75) cls = 'warn';
+        if (!d.storing) cls = 'err';
+
+        const capText = d.capMb ? ' / ' + gb(d.capMb) : '';
+        const title = [
+          'รูปที่เก็บไว้ ' + d.images.toLocaleString() + ' ใบ',
+          'ใช้พื้นที่ ' + gb(d.sizeMb) + (d.capMb ? ' จากเพดาน ' + gb(d.capMb) + ' (' + usedPct + '%)' : ' (ไม่จำกัด)'),
+          d.diskFreePercent === null ? '' : 'ดิสก์เหลือ ' + d.diskFreePercent + '% (หยุดเก็บที่ ' + d.minFreePercent + '%)',
+          'เก็บรูปแบบ: ' + d.mode + ' · เก็บย้อนหลัง ' + d.keepDays + ' วัน',
+          d.oldestDay ? 'มีรูปตั้งแต่ ' + d.oldestDay + ' ถึง ' + d.newestDay : 'ยังไม่มีรูป',
+          d.storing ? 'สถานะ: กำลังเก็บรูป' : 'สถานะ: หยุดเก็บ - ' + d.blockedReason,
+          'ที่เก็บ: ' + d.dir,
+        ].filter(Boolean).join('\n');
+
+        document.getElementById('storeChips').innerHTML =
+          '<span class="chip ' + cls + '" title="' + esc(title) + '">' +
+          (d.storing ? 'รูป ' : 'หยุดเก็บรูป ') + '<b>' + gb(d.sizeMb) + capText + '</b></span>';
+      } catch (e) { /* leave the last value on screen */ }
     }
 
     /* ===== Group management ===== */
@@ -981,6 +1011,8 @@
 
     refresh();
     setInterval(refresh, REFRESH_MS);
+    refreshStorage();
+    setInterval(refreshStorage, 60000);
   </script>
 </body>
 

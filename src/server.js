@@ -38,8 +38,9 @@ setInterval(() => {
   const healthDays = parseInt(process.env.HEALTH_KEEP_DAYS, 10) || 14;
   const imageDays = parseInt(process.env.IMAGES_KEEP_DAYS, 10) || 30;
   const result = prune(readsDays, healthDays, imageDays);
-  if (result.reads || result.health || result.images) {
-    console.log(`prune: removed ${result.reads} reads, ${result.health} health samples, ${result.images} images`);
+  if (result.reads || result.health || result.images || result.cappedImages) {
+    console.log(`prune: removed ${result.reads} reads, ${result.health} health samples, ${result.images} images`
+      + (result.cappedImages ? `, ${result.cappedImages} images over the size cap` : ''));
   }
 }, 3600000);
 

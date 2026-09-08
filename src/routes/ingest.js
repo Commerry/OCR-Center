@@ -1,5 +1,6 @@
 const express = require('express');
-const { ingestHeartbeat } = require('../db');
+const { ingestHeartbeat, enforceImageCap } = require('../db');
+const imageStore = require('../imageStore');
 
 /*
  * Device-facing endpoint. CM4 cameras POST here (configured in the camera web
@@ -26,6 +27,8 @@ router.post('/heartbeat', (req, res) => {
 
   try {
     ingestHeartbeat(payload);
+    // cheap check (cached size); only touches the disk when the cap is passed
+    if (imageStore.overCap()) enforceImageCap();
     return res.json({ ok: true });
   } catch (error) {
     console.error('heartbeat ingest failed:', error.message);
