@@ -94,6 +94,24 @@ if (!deviceCols.some((c) => c.name === 'web_url')) {
   db.exec('ALTER TABLE devices ADD COLUMN web_url TEXT');
 }
 
+// migration: reads.weight / reads.ocr_model (reports compare models and weights)
+const readCols = db.prepare('PRAGMA table_info(reads)').all();
+if (!readCols.some((c) => c.name === 'weight')) {
+  db.exec('ALTER TABLE reads ADD COLUMN weight REAL');
+}
+if (!readCols.some((c) => c.name === 'ocr_model')) {
+  db.exec('ALTER TABLE reads ADD COLUMN ocr_model TEXT');
+}
+
+// migration: cameras.ocr_model / cameras.letter_read (model currently configured)
+const cameraCols = db.prepare('PRAGMA table_info(cameras)').all();
+if (!cameraCols.some((c) => c.name === 'ocr_model')) {
+  db.exec('ALTER TABLE cameras ADD COLUMN ocr_model TEXT');
+}
+if (!cameraCols.some((c) => c.name === 'letter_read')) {
+  db.exec('ALTER TABLE cameras ADD COLUMN letter_read INTEGER');
+}
+
 const statements = {
   upsertDevice: db.prepare(`
     INSERT INTO devices (device_id, hostname, ip, mac, platform, app_version, first_seen, last_seen, health_json)
@@ -105,14 +123,15 @@ const statements = {
 
   upsertCamera: db.prepare(`
     INSERT INTO cameras (device_id, camera_name, display_name, enabled, running, started,
-      plc_enabled, plc_connected, last_read_value, last_read_conf, last_read_at, weight,
-      last_image, last_image_at, updated_at)
+      plc_enabled, plc_connected, ocr_model, letter_read, last_read_value, last_read_conf,
+      last_read_at, weight, last_image, last_image_at, updated_at)
     VALUES (@device_id, @camera_name, @display_name, @enabled, @running, @started,
-      @plc_enabled, @plc_connected, @last_read_value, @last_read_conf, @last_read_at, @weight,
-      @last_image, @last_image_at, @now)
+      @plc_enabled, @plc_connected, @ocr_model, @letter_read, @last_read_value, @last_read_conf,
+      @last_read_at, @weight, @last_image, @last_image_at, @now)
     ON CONFLICT (device_id, camera_name) DO UPDATE SET
       display_name = @display_name, enabled = @enabled, running = @running, started = @started,
       plc_enabled = @plc_enabled, plc_connected = @plc_connected,
+      ocr_model = @ocr_model, letter_read = @letter_read,
       last_read_value = COALESCE(@last_read_value, last_read_value),
       last_read_conf  = COALESCE(@last_read_conf, last_read_conf),
       last_read_at    = COALESCE(@last_read_at, last_read_at),
@@ -123,8 +142,8 @@ const statements = {
   `),
 
   insertRead: db.prepare(`
-    INSERT OR IGNORE INTO reads (device_id, camera, value, confidence, at)
-    VALUES (@device_id, @camera, @value, @confidence, @at)
+    INSERT OR IGNORE INTO reads (device_id, camera, value, confidence, weight, ocr_model, at)
+    VALUES (@device_id, @camera, @value, @confidence, @weight, @ocr_model, @at)
   `),
 
   lastHealthSample: db.prepare(`
@@ -154,12 +173,13 @@ const statements = {
   getDevice: db.prepare(`SELECT * FROM devices WHERE device_id = ?`),
   camerasForDevice: db.prepare(`
     SELECT device_id, camera_name, display_name, enabled, running, started, plc_enabled,
-           plc_connected, last_read_value, last_read_conf, last_read_at, weight, last_image_at, updated_at
+           plc_connected, ocr_model, letter_read, last_read_value, last_read_conf, last_read_at,
+           weight, last_image_at, updated_at
     FROM cameras WHERE device_id = ?
   `),
   cameraImage: db.prepare(`SELECT last_image, last_image_at FROM cameras WHERE device_id = ? AND camera_name = ?`),
   readsForDevice: db.prepare(`
-    SELECT camera, value, confidence, at FROM reads
+    SELECT camera, value, confidence, weight, ocr_model, at FROM reads
     WHERE device_id = ? ORDER BY at DESC LIMIT ?
   `),
   healthForDevice: db.prepare(`
@@ -208,6 +228,8 @@ const ingestHeartbeat = db.transaction((payload) => {
       started: cam.started ? 1 : 0,
       plc_enabled: cam.plcEnabled ? 1 : 0,
       plc_connected: cam.plcConnected === null ? null : (cam.plcConnected ? 1 : 0),
+      ocr_model: cam.ocrModel || null,
+      letter_read: cam.letterRead ? 1 : 0,
       last_read_value: cam.lastRead ? String(cam.lastRead.value) : null,
       last_read_conf: cam.lastRead ? cam.lastRead.confidence : null,
       last_read_at: cam.lastRead ? cam.lastRead.at : null,
@@ -243,12 +265,19 @@ const ingestHeartbeat = db.transaction((payload) => {
     }
   }
 
+  // model per camera, taken from the same heartbeat that carries these reads
+  const modelByCamera = new Map(
+    (payload.cameras || []).map((c) => [c.cameraName, c.ocrModel || null]),
+  );
+
   for (const read of payload.recentReads || []) {
     statements.insertRead.run({
       device_id: payload.deviceId,
       camera: read.camera,
       value: String(read.value),
       confidence: read.confidence,
+      weight: typeof read.weight === 'number' && Number.isFinite(read.weight) ? read.weight : null,
+      ocr_model: modelByCamera.get(read.camera) || null,
       at: read.at,
     });
   }

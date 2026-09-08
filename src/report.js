@@ -10,7 +10,7 @@ const { ZipWriter } = require('./zip');
  *
  * A report covers one time range and a set of devices, and comes out as a ZIP:
  *   detail.csv   - one row per read, in time order
- *   summary.csv  - accuracy per device, then a breakdown per value read
+ *   summary.csv  - accuracy per device, per value read, and per OCR model
  *   images/...   - the picture the device pushed for that read (when there is one)
  *
  * Reads that came back 888 (no number found) or 999 (bad format) are counted as
@@ -38,6 +38,11 @@ const csvCell = (v) => {
 // BOM so Excel opens Thai text correctly, CRLF so it looks right on Windows
 const toCsv = (rows) => '﻿' + rows.map((r) => r.map(csvCell).join(',')).join('\r\n') + '\r\n';
 
+const num = (n, digits = 3) => (typeof n === 'number' && Number.isFinite(n)
+  ? Math.round(n * 10 ** digits) / 10 ** digits : '');
+// '' in config means the camera runs the default blob shipped with the program
+const modelLabel = (m) => (m ? String(m) : 'ค่าเริ่มต้น (default)');
+
 const statusOf = (value) => FAIL_CODES[String(value)] || 'อ่านสำเร็จ';
 const isFail = (value) => Boolean(FAIL_CODES[String(value)]);
 
@@ -47,7 +52,8 @@ const queryRows = ({ from, to, deviceIds }) => {
   const marks = deviceIds.map(() => '?').join(',');
   const sql = `
     SELECT r.device_id, r.camera, r.value, r.confidence, r.at,
-           d.hostname, d.ip, c.display_name, g.name AS group_name,
+           r.weight, COALESCE(r.ocr_model, c.ocr_model) AS ocr_model,
+           d.hostname, d.ip, c.display_name, c.letter_read, g.name AS group_name,
            i.file AS image_file
     FROM reads r
     LEFT JOIN devices d ON d.device_id = r.device_id
@@ -73,12 +79,21 @@ const summarise = (rows, minConfidence) => {
         group: r.group_name || 'ยังไม่จัดกลุ่ม',
         device: deviceLabel(r),
         ip: r.ip || '',
+        models: new Set(),
         total: 0, ok: 0, notFound: 0, invalid: 0, lowConf: 0, withImage: 0, confSum: 0, confN: 0,
+        weightSum: 0, weightN: 0, weightMin: null, weightMax: null,
       });
     }
     const d = byDevice.get(key);
     d.total += 1;
     if (r.image_file) d.withImage += 1;
+    d.models.add(modelLabel(r.ocr_model));
+    if (typeof r.weight === 'number') {
+      d.weightSum += r.weight;
+      d.weightN += 1;
+      d.weightMin = d.weightMin === null ? r.weight : Math.min(d.weightMin, r.weight);
+      d.weightMax = d.weightMax === null ? r.weight : Math.max(d.weightMax, r.weight);
+    }
 
     const status = String(r.value);
     if (status === '888') d.notFound += 1;
@@ -99,11 +114,16 @@ const summarise = (rows, minConfidence) => {
         device: deviceLabel(r),
         value: r.value,
         count: 0, confSum: 0, confN: 0, confMin: null, withImage: 0,
+        weightSum: 0, weightN: 0,
       });
     }
     const v = byValue.get(vkey);
     v.count += 1;
     if (r.image_file) v.withImage += 1;
+    if (typeof r.weight === 'number') {
+      v.weightSum += r.weight;
+      v.weightN += 1;
+    }
     if (typeof r.confidence === 'number') {
       v.confSum += r.confidence;
       v.confN += 1;
@@ -111,24 +131,56 @@ const summarise = (rows, minConfidence) => {
     }
   }
 
+  // per-model rollup: lets two model versions be compared on the same data
+  const byModel = new Map();
+  for (const r of rows) {
+    const name = modelLabel(r.ocr_model);
+    if (!byModel.has(name)) {
+      byModel.set(name, {
+        model: name, devices: new Set(),
+        total: 0, ok: 0, notFound: 0, invalid: 0, lowConf: 0, confSum: 0, confN: 0,
+      });
+    }
+    const m = byModel.get(name);
+    m.devices.add(r.device_id + '|' + r.camera);
+    m.total += 1;
+    const st = String(r.value);
+    if (st === '888') m.notFound += 1;
+    else if (st === '999') m.invalid += 1;
+    else {
+      m.ok += 1;
+      if (typeof r.confidence === 'number') {
+        m.confSum += r.confidence;
+        m.confN += 1;
+        if (minConfidence > 0 && r.confidence * 100 < minConfidence) m.lowConf += 1;
+      }
+    }
+  }
+
   const devices = [...byDevice.values()].sort((a, b) =>
     a.group.localeCompare(b.group, 'th') || a.device.localeCompare(b.device, 'th'));
   const values = [...byValue.values()].sort((a, b) =>
     a.device.localeCompare(b.device, 'th') || b.count - a.count);
+  const models = [...byModel.values()].sort((a, b) => b.total - a.total);
 
   const totals = devices.reduce((t, d) => ({
     total: t.total + d.total, ok: t.ok + d.ok, notFound: t.notFound + d.notFound,
     invalid: t.invalid + d.invalid, lowConf: t.lowConf + d.lowConf,
     withImage: t.withImage + d.withImage, confSum: t.confSum + d.confSum, confN: t.confN + d.confN,
-  }), { total: 0, ok: 0, notFound: 0, invalid: 0, lowConf: 0, withImage: 0, confSum: 0, confN: 0 });
+    weightSum: t.weightSum + d.weightSum, weightN: t.weightN + d.weightN,
+  }), {
+    total: 0, ok: 0, notFound: 0, invalid: 0, lowConf: 0, withImage: 0, confSum: 0, confN: 0,
+    weightSum: 0, weightN: 0,
+  });
 
-  return { devices, values, totals };
+  return { devices, values, models, totals };
 };
 
 const detailCsv = (rows, minConfidence) => {
   const out = [[
     'ลำดับ', 'วันที่เวลา', 'กลุ่ม', 'อุปกรณ์', 'IP', 'กล้อง',
-    'เลขที่อ่านได้', 'สถานะ', 'ความมั่นใจ (%)', 'ต่ำกว่าเกณฑ์', 'ไฟล์รูป',
+    'เลขที่อ่านได้', 'สถานะ', 'ความมั่นใจ (%)', 'ต่ำกว่าเกณฑ์',
+    'โมเดลที่ใช้', 'อ่านตัวอักษรนำหน้า', 'น้ำหนัก', 'ไฟล์รูป',
   ]];
   rows.forEach((r, i) => {
     const ok = !isFail(r.value);
@@ -145,13 +197,16 @@ const detailCsv = (rows, minConfidence) => {
       statusOf(r.value),
       confPct(r.confidence),
       low ? 'ใช่' : '',
+      modelLabel(r.ocr_model),
+      r.letter_read ? 'เปิด' : 'ปิด',
+      num(r.weight),
       r.image_file ? 'images/' + r.image_file : '',
     ]);
   });
   return toCsv(out);
 };
 
-const summaryCsv = ({ devices, values, totals }, meta) => {
+const summaryCsv = ({ devices, values, models, totals }, meta) => {
   const out = [];
   out.push(['รายงานสรุปความแม่นยำการอ่านตัวเลข']);
   out.push(['ช่วงเวลา', meta.fromLabel + ' ถึง ' + meta.toLabel]);
@@ -162,31 +217,50 @@ const summaryCsv = ({ devices, values, totals }, meta) => {
 
   out.push(['== สรุปรายอุปกรณ์ ==']);
   out.push([
-    'กลุ่ม', 'อุปกรณ์', 'IP', 'อ่านทั้งหมด (ครั้ง)', 'อ่านสำเร็จ', 'อ่านไม่เจอ (888)',
+    'กลุ่ม', 'อุปกรณ์', 'IP', 'โมเดลที่ใช้', 'อ่านทั้งหมด (ครั้ง)', 'อ่านสำเร็จ', 'อ่านไม่เจอ (888)',
     'รูปแบบผิด (999)', 'อ่านผิดรวม', 'อัตราความถูกต้อง (%)', 'ความมั่นใจเฉลี่ย (%)',
     'ความมั่นใจต่ำกว่าเกณฑ์ (ครั้ง)', 'มีรูปแนบ (ครั้ง)',
+    'น้ำหนักเฉลี่ย', 'น้ำหนักต่ำสุด', 'น้ำหนักสูงสุด', 'มีน้ำหนัก (ครั้ง)',
   ]);
   for (const d of devices) {
     const failed = d.notFound + d.invalid;
     out.push([
-      d.group, d.device, d.ip, d.total, d.ok, d.notFound, d.invalid, failed,
+      d.group, d.device, d.ip, [...d.models].join(' / '),
+      d.total, d.ok, d.notFound, d.invalid, failed,
       pct(d.ok, d.total), d.confN ? Math.round((d.confSum / d.confN) * 10000) / 100 : '',
       d.lowConf, d.withImage,
+      d.weightN ? num(d.weightSum / d.weightN) : '', num(d.weightMin), num(d.weightMax), d.weightN,
     ]);
   }
   const failedAll = totals.notFound + totals.invalid;
   out.push([
-    'รวมทุกอุปกรณ์', '', '', totals.total, totals.ok, totals.notFound, totals.invalid, failedAll,
+    'รวมทุกอุปกรณ์', '', '', '', totals.total, totals.ok, totals.notFound, totals.invalid, failedAll,
     pct(totals.ok, totals.total),
     totals.confN ? Math.round((totals.confSum / totals.confN) * 10000) / 100 : '',
     totals.lowConf, totals.withImage,
+    totals.weightN ? num(totals.weightSum / totals.weightN) : '', '', '', totals.weightN,
   ]);
+  out.push([]);
+
+  out.push(['== สรุปรายโมเดล ==']);
+  out.push([
+    'โมเดลที่ใช้', 'จำนวนกล้องที่ใช้', 'อ่านทั้งหมด (ครั้ง)', 'อ่านสำเร็จ', 'อ่านไม่เจอ (888)',
+    'รูปแบบผิด (999)', 'อ่านผิดรวม', 'อัตราความถูกต้อง (%)', 'ความมั่นใจเฉลี่ย (%)',
+    'ความมั่นใจต่ำกว่าเกณฑ์ (ครั้ง)',
+  ]);
+  for (const m of models || []) {
+    out.push([
+      m.model, m.devices.size, m.total, m.ok, m.notFound, m.invalid, m.notFound + m.invalid,
+      pct(m.ok, m.total), m.confN ? Math.round((m.confSum / m.confN) * 10000) / 100 : '',
+      m.lowConf,
+    ]);
+  }
   out.push([]);
 
   out.push(['== สรุปรายเลขที่อ่านได้ ==']);
   out.push([
     'กลุ่ม', 'อุปกรณ์', 'เลขที่อ่านได้', 'สถานะ', 'จำนวนครั้ง', 'สัดส่วนของอุปกรณ์ (%)',
-    'ความมั่นใจเฉลี่ย (%)', 'ความมั่นใจต่ำสุด (%)', 'มีรูปแนบ (ครั้ง)',
+    'ความมั่นใจเฉลี่ย (%)', 'ความมั่นใจต่ำสุด (%)', 'น้ำหนักเฉลี่ย', 'มีรูปแนบ (ครั้ง)',
   ]);
   const deviceTotal = new Map(devices.map((d) => [d.device, d.total]));
   for (const v of values) {
@@ -195,6 +269,7 @@ const summaryCsv = ({ devices, values, totals }, meta) => {
       pct(v.count, deviceTotal.get(v.device) || 0),
       v.confN ? Math.round((v.confSum / v.confN) * 10000) / 100 : '',
       v.confMin === null ? '' : confPct(v.confMin),
+      v.weightN ? num(v.weightSum / v.weightN) : '',
       v.withImage,
     ]);
   }
@@ -213,6 +288,8 @@ const preview = ({ from, to, deviceIds, minConfidence }) => {
     ok: s.totals.ok,
     failed: s.totals.notFound + s.totals.invalid,
     accuracy: pct(s.totals.ok, s.totals.total),
+    models: s.models.map((m) => m.model),
+    withWeight: s.totals.weightN,
   };
 };
 

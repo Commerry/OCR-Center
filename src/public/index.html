@@ -914,8 +914,11 @@
           '<div class="rep-stat"><b style="color:var(--ok)">' + d.ok + '</b><span>อ่านสำเร็จ</span></div>' +
           '<div class="rep-stat"><b style="color:' + (d.failed ? 'var(--err)' : 'var(--text-1)') + '">' + d.failed + '</b><span>อ่านผิด</span></div>' +
           '<div class="rep-stat"><b>' + d.images + '</b><span>มีรูป</span></div>';
+        const models = (d.models || []).length ? esc(d.models.join(', ')) : '-';
         hint.innerHTML = 'ขอบเขต: ' + esc(d.scope) + ' &middot; อุปกรณ์ ' + d.devices +
-          ' เครื่อง &middot; อัตราความถูกต้อง <b style="color:var(--text-1)">' + d.accuracy + '%</b>';
+          ' เครื่อง &middot; อัตราความถูกต้อง <b style="color:var(--text-1)">' + d.accuracy + '%</b>' +
+          '<br>โมเดลที่ใช้ในช่วงนี้: <b style="color:var(--text-1)">' + models + '</b>' +
+          ' &middot; มีข้อมูลน้ำหนัก ' + (d.withWeight || 0) + ' ครั้ง';
       } catch (e) {
         hint.textContent = 'คำนวณไม่สำเร็จ';
       }
