@@ -1,6 +1,7 @@
 const path = require('path');
 const fs = require('fs');
 const Database = require('better-sqlite3');
+const imageStore = require('./imageStore');
 
 const dataDir = path.join(__dirname, '..', 'data');
 fs.mkdirSync(dataDir, { recursive: true });
@@ -61,6 +62,20 @@ CREATE TABLE IF NOT EXISTS health_history (
   disk_used_pct INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_health_device_at ON health_history (device_id, at DESC);
+
+-- one row per read image pushed by a device (used to build reports)
+CREATE TABLE IF NOT EXISTS read_images (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  device_id  TEXT NOT NULL,
+  camera     TEXT NOT NULL,
+  value      TEXT,
+  confidence REAL,
+  read_at    TEXT,
+  image_at   TEXT NOT NULL,
+  file       TEXT NOT NULL,
+  UNIQUE (device_id, camera, image_at)
+);
+CREATE INDEX IF NOT EXISTS idx_read_images_device_at ON read_images (device_id, image_at DESC);
 
 CREATE TABLE IF NOT EXISTS groups (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -135,6 +150,7 @@ const statements = {
   deleteDeviceCameras: db.prepare(`DELETE FROM cameras WHERE device_id = ?`),
   deleteDeviceReads: db.prepare(`DELETE FROM reads WHERE device_id = ?`),
   deleteDeviceHealth: db.prepare(`DELETE FROM health_history WHERE device_id = ?`),
+  deleteDeviceImages: db.prepare(`DELETE FROM read_images WHERE device_id = ?`),
   getDevice: db.prepare(`SELECT * FROM devices WHERE device_id = ?`),
   camerasForDevice: db.prepare(`
     SELECT device_id, camera_name, display_name, enabled, running, started, plc_enabled,
@@ -150,6 +166,15 @@ const statements = {
     SELECT at, cpu_temp_c, load_pct, ram_free_mb, disk_used_pct FROM health_history
     WHERE device_id = ? ORDER BY at DESC LIMIT ?
   `),
+
+  hasImage: db.prepare(`SELECT 1 FROM read_images WHERE device_id = ? AND camera = ? AND image_at = ?`),
+  insertImage: db.prepare(`
+    INSERT OR IGNORE INTO read_images (device_id, camera, value, confidence, read_at, image_at, file)
+    VALUES (@device_id, @camera, @value, @confidence, @read_at, @image_at, @file)
+  `),
+  imagesOlderThan: db.prepare(`SELECT file FROM read_images WHERE image_at < ?`),
+  pruneImageRows: db.prepare(`DELETE FROM read_images WHERE image_at < ?`),
+  imageCount: db.prepare(`SELECT COUNT(*) AS n FROM read_images`),
 
   pruneReads: db.prepare(`DELETE FROM reads WHERE at < ?`),
   pruneHealth: db.prepare(`DELETE FROM health_history WHERE at < ?`),
@@ -191,6 +216,31 @@ const ingestHeartbeat = db.transaction((payload) => {
       last_image_at: cam.lastImageAt || null,
       now,
     });
+
+    // Keep the pushed image on disk so reports can attach it later.
+    // One image per heartbeat at most: skip when this image_at was already stored.
+    if (cam.lastImage && cam.lastImageAt) {
+      const seen = statements.hasImage.get(payload.deviceId, cam.cameraName, cam.lastImageAt);
+      if (!seen) {
+        const file = imageStore.saveImage({
+          deviceId: payload.deviceId,
+          value: cam.lastRead ? cam.lastRead.value : null,
+          at: cam.lastImageAt,
+          base64: cam.lastImage,
+        });
+        if (file) {
+          statements.insertImage.run({
+            device_id: payload.deviceId,
+            camera: cam.cameraName,
+            value: cam.lastRead ? String(cam.lastRead.value) : null,
+            confidence: cam.lastRead ? cam.lastRead.confidence : null,
+            read_at: cam.lastRead ? cam.lastRead.at : null,
+            image_at: cam.lastImageAt,
+            file,
+          });
+        }
+      }
+    }
   }
 
   for (const read of payload.recentReads || []) {
@@ -225,6 +275,7 @@ const deleteDevice = db.transaction((deviceId) => {
   statements.deleteDeviceCameras.run(deviceId);
   statements.deleteDeviceReads.run(deviceId);
   statements.deleteDeviceHealth.run(deviceId);
+  statements.deleteDeviceImages.run(deviceId);
   statements.deleteDeviceRow.run(deviceId);
 });
 
@@ -233,11 +284,16 @@ const reorderGroups = db.transaction((ids) => {
   ids.forEach((id, index) => statements.setGroupOrder.run(index, id));
 });
 
-const prune = (readsKeepDays, healthKeepDays) => {
+const prune = (readsKeepDays, healthKeepDays, imagesKeepDays) => {
   const cutoff = (days) => new Date(Date.now() - days * 86400000).toISOString();
   const r = statements.pruneReads.run(cutoff(readsKeepDays));
   const h = statements.pruneHealth.run(cutoff(healthKeepDays));
-  return { reads: r.changes, health: h.changes };
+  let images = 0;
+  if (imagesKeepDays && imagesKeepDays > 0) {
+    images = statements.pruneImageRows.run(cutoff(imagesKeepDays)).changes;
+    imageStore.pruneImages(imagesKeepDays);
+  }
+  return { reads: r.changes, health: h.changes, images };
 };
 
 module.exports = { db, statements, ingestHeartbeat, prune, reorderGroups, deleteDevice };

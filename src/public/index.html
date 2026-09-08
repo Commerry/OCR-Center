@@ -255,7 +255,35 @@
     .move-menu .mi.current { color: var(--ok); }
     .move-menu .mi-head { padding: .45rem .8rem; font-size: .58rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--text-3); background: var(--surface); }
 
-    /* ===== Detail modal ===== */
+    /* ===== Report dialog ===== */
+    .rep-grid { display: grid; grid-template-columns: 1fr 1fr; gap: .8rem; }
+    .rep-field { display: flex; flex-direction: column; gap: .35rem; }
+    .rep-field label { font-size: .68rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--text-3); }
+    .rep-field input, .rep-field select {
+      background: var(--surface-3); border: 1px solid var(--line); color: var(--text-1);
+      border-radius: var(--radius-sm); padding: .45rem .6rem;
+      font-family: var(--font-ui); font-size: .8rem;
+    }
+    .rep-field input:focus, .rep-field select:focus { outline: none; border-color: #8f8f99; }
+    .rep-presets { display: flex; gap: .35rem; flex-wrap: wrap; margin-top: .2rem; }
+    .rep-preset {
+      background: var(--surface-2); border: 1px solid var(--line-soft); color: var(--text-2);
+      border-radius: 999px; padding: .2rem .6rem; font-size: .66rem; cursor: pointer;
+    }
+    .rep-preset:hover { background: var(--surface-3); color: var(--text-1); }
+    .rep-devices {
+      max-height: 190px; overflow-y: auto; border: 1px solid var(--line-soft);
+      border-radius: var(--radius-sm); padding: .4rem .55rem; background: var(--surface-2);
+    }
+    .rep-dev { display: flex; align-items: center; gap: .5rem; padding: .22rem 0; font-size: .76rem; color: var(--text-2); }
+    .rep-dev input { accent-color: #9a9aa4; }
+    .rep-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: .5rem; margin-top: .3rem; }
+    .rep-stat { background: var(--surface-2); border: 1px solid var(--line-soft); border-radius: var(--radius-sm); padding: .45rem .6rem; }
+    .rep-stat b { display: block; font-family: var(--font-mono); font-size: .95rem; color: var(--text-1); }
+    .rep-stat span { font-size: .6rem; letter-spacing: .06em; text-transform: uppercase; color: var(--text-3); }
+    .rep-hint { font-size: .68rem; color: var(--text-3); line-height: 1.6; }
+
+        /* ===== Detail modal ===== */
     .overlay {
       position: fixed; inset: 0; background: rgba(4, 6, 10, .75);
       backdrop-filter: blur(6px); z-index: 50;
@@ -311,6 +339,7 @@
     <symbol id="i-folder" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></symbol>
     <symbol id="i-external" viewBox="0 0 24 24"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></symbol>
     <symbol id="i-logout" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></symbol>
+    <symbol id="i-report" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></symbol>
     <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></symbol>
   </svg>
 
@@ -323,6 +352,9 @@
       </div>
     </div>
     <div class="sum-chips" id="sumChips"></div>
+    <button class="btn" onclick="openReport()" title="ออกรายงาน CSV พร้อมรูป">
+      <svg class="icon"><use href="#i-report"/></svg> Report
+    </button>
     <button class="btn grad" onclick="createGroup()">
       <svg class="icon"><use href="#i-plus"/></svg> New Group
     </button>
@@ -335,6 +367,75 @@
   <main class="wrap" id="main">
     <div class="empty">Loading devices...</div>
   </main>
+
+  <!-- Report -->
+  <div class="overlay" id="reportOverlay">
+    <div class="panel" style="max-width:720px">
+      <div class="panel-head">
+        <svg class="icon" style="width:1.2rem;height:1.2rem"><use href="#i-report"/></svg>
+        <div>
+          <div class="panel-title">ออกรายงานการอ่านตัวเลข</div>
+          <div class="panel-sub">ไฟล์ ZIP: detail.csv, summary.csv และรูปที่อุปกรณ์ส่งมา</div>
+        </div>
+        <button class="x-btn" style="margin-left:auto" onclick="closeReport()"><svg class="icon"><use href="#i-x"/></svg></button>
+      </div>
+
+      <div class="rep-grid">
+        <div class="rep-field">
+          <label>ตั้งแต่</label>
+          <input type="datetime-local" id="repFrom">
+        </div>
+        <div class="rep-field">
+          <label>ถึง</label>
+          <input type="datetime-local" id="repTo">
+        </div>
+      </div>
+      <div class="rep-presets">
+        <span class="rep-preset" onclick="repPreset(0)">วันนี้</span>
+        <span class="rep-preset" onclick="repPreset(1)">เมื่อวาน</span>
+        <span class="rep-preset" onclick="repPreset(7)">7 วัน</span>
+        <span class="rep-preset" onclick="repPreset(30)">30 วัน</span>
+      </div>
+
+      <div class="sec-title">ขอบเขต</div>
+      <div class="rep-grid">
+        <div class="rep-field">
+          <label>เลือกจากกลุ่ม</label>
+          <select id="repGroup" onchange="repGroupChanged()"></select>
+        </div>
+        <div class="rep-field">
+          <label>ความมั่นใจขั้นต่ำ (%) - 0 คือไม่กรอง</label>
+          <input type="number" id="repMinConf" min="0" max="100" step="5" value="0">
+        </div>
+      </div>
+      <div class="rep-field" style="margin-top:.6rem">
+        <label>หรือเลือกอุปกรณ์เอง</label>
+        <div class="rep-devices" id="repDevices"></div>
+      </div>
+
+      <div class="rep-field" style="margin-top:.7rem">
+        <label style="display:flex;align-items:center;gap:.5rem;text-transform:none;letter-spacing:0;font-size:.78rem;color:var(--text-2)">
+          <input type="checkbox" id="repImages" checked> แนบรูปที่อุปกรณ์ส่งมาไปในไฟล์ ZIP
+        </label>
+      </div>
+
+      <div class="sec-title">ข้อมูลในช่วงที่เลือก</div>
+      <div class="rep-stats" id="repStats">
+        <div class="rep-stat"><b>-</b><span>อ่านทั้งหมด</span></div>
+        <div class="rep-stat"><b>-</b><span>อ่านสำเร็จ</span></div>
+        <div class="rep-stat"><b>-</b><span>อ่านผิด</span></div>
+        <div class="rep-stat"><b>-</b><span>มีรูป</span></div>
+      </div>
+      <div class="rep-hint" id="repHint" style="margin-top:.5rem"></div>
+
+      <div style="display:flex;gap:.5rem;margin-top:1.2rem">
+        <button class="btn" onclick="repRefresh()"><svg class="icon"><use href="#i-refresh"/></svg> คำนวณใหม่</button>
+        <button class="btn grad" style="margin-left:auto" id="repDownload" onclick="downloadReport()">
+          <svg class="icon"><use href="#i-report"/></svg> ดาวน์โหลดรายงาน
+        </button>
+      </div>
+    </div>
+  </div>
 
   <!-- Device detail -->
   <div class="overlay" id="detailOverlay">
@@ -723,6 +824,137 @@
             </tbody>
           </table>
         </div>`;
+    }
+
+    /* ===== Report ===== */
+    const pad2 = (n) => String(n).padStart(2, '0');
+    const toLocalInput = (d) =>
+      d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()) +
+      'T' + pad2(d.getHours()) + ':' + pad2(d.getMinutes());
+
+    function repPreset(days) {
+      const now = new Date();
+      const start = new Date(now);
+      start.setHours(0, 0, 0, 0);
+      let end = now;
+      if (days === 1) {            // yesterday only
+        start.setDate(start.getDate() - 1);
+        end = new Date(start);
+        end.setHours(23, 59, 59, 0);
+      } else if (days > 1) {
+        start.setDate(start.getDate() - (days - 1));
+      }
+      document.getElementById('repFrom').value = toLocalInput(start);
+      document.getElementById('repTo').value = toLocalInput(end);
+      repRefresh();
+    }
+
+    function openReport() {
+      const gs = document.getElementById('repGroup');
+      gs.innerHTML = '<option value="">ทุกอุปกรณ์</option>' +
+        groups.map(g => '<option value="' + g.id + '">' + esc(g.name) + '</option>').join('') +
+        '<option value="unassigned">ยังไม่จัดกลุ่ม</option>';
+
+      document.getElementById('repDevices').innerHTML = devices.map(d => {
+        const name = (d.cameras[0] && d.cameras[0].display_name) || d.hostname || d.deviceId;
+        return '<label class="rep-dev"><input type="checkbox" value="' + esc(d.deviceId) + '" onchange="repDeviceChanged()">' +
+          esc(name) + ' <span style="color:var(--text-3)">' + esc(d.ip || '') + '</span></label>';
+      }).join('') || '<div style="color:var(--text-3);font-size:.74rem">ยังไม่มีอุปกรณ์</div>';
+
+      document.getElementById('reportOverlay').classList.add('show');
+      if (!document.getElementById('repFrom').value) repPreset(0);
+      else repRefresh();
+    }
+
+    function closeReport() {
+      document.getElementById('reportOverlay').classList.remove('show');
+    }
+
+    document.getElementById('reportOverlay').addEventListener('click', (e) => {
+      if (e.target.id === 'reportOverlay') closeReport();
+    });
+
+    // picking a group clears the manual device ticks, and vice versa
+    function repGroupChanged() {
+      document.querySelectorAll('#repDevices input:checked').forEach(c => { c.checked = false; });
+      repRefresh();
+    }
+    function repDeviceChanged() {
+      if (document.querySelectorAll('#repDevices input:checked').length) {
+        document.getElementById('repGroup').value = '';
+      }
+      repRefresh();
+    }
+
+    function repBody() {
+      const picked = [...document.querySelectorAll('#repDevices input:checked')].map(c => c.value);
+      return {
+        from: document.getElementById('repFrom').value,
+        to: document.getElementById('repTo').value,
+        groupId: picked.length ? '' : document.getElementById('repGroup').value,
+        deviceIds: picked,
+        minConfidence: Number(document.getElementById('repMinConf').value) || 0,
+        includeImages: document.getElementById('repImages').checked,
+      };
+    }
+
+    async function repRefresh() {
+      const stats = document.getElementById('repStats');
+      const hint = document.getElementById('repHint');
+      hint.textContent = 'กำลังคำนวณ...';
+      try {
+        const r = await fetch('/api/reports/preview', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(repBody()),
+        });
+        const d = await r.json();
+        if (!d.success) { hint.textContent = d.error || 'คำนวณไม่สำเร็จ'; return; }
+        stats.innerHTML =
+          '<div class="rep-stat"><b>' + d.reads + '</b><span>อ่านทั้งหมด</span></div>' +
+          '<div class="rep-stat"><b style="color:var(--ok)">' + d.ok + '</b><span>อ่านสำเร็จ</span></div>' +
+          '<div class="rep-stat"><b style="color:' + (d.failed ? 'var(--err)' : 'var(--text-1)') + '">' + d.failed + '</b><span>อ่านผิด</span></div>' +
+          '<div class="rep-stat"><b>' + d.images + '</b><span>มีรูป</span></div>';
+        hint.innerHTML = 'ขอบเขต: ' + esc(d.scope) + ' &middot; อุปกรณ์ ' + d.devices +
+          ' เครื่อง &middot; อัตราความถูกต้อง <b style="color:var(--text-1)">' + d.accuracy + '%</b>';
+      } catch (e) {
+        hint.textContent = 'คำนวณไม่สำเร็จ';
+      }
+    }
+
+    async function downloadReport() {
+      const btn = document.getElementById('repDownload');
+      const hint = document.getElementById('repHint');
+      const label = btn.innerHTML;
+      btn.disabled = true;
+      btn.innerHTML = 'กำลังสร้างไฟล์...';
+      try {
+        const r = await fetch('/api/reports/export', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(repBody()),
+        });
+        if (!r.ok || (r.headers.get('content-type') || '').includes('application/json')) {
+          const d = await r.json().catch(() => ({}));
+          hint.textContent = d.error || 'สร้างรายงานไม่สำเร็จ';
+          return;
+        }
+        const blob = await r.blob();
+        const name = (r.headers.get('content-disposition') || '').match(/filename="([^"]+)"/);
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = name ? name[1] : 'ocr-report.zip';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+        hint.innerHTML = 'ดาวน์โหลดแล้ว &middot; ' + (r.headers.get('X-Report-Reads') || 0) +
+          ' แถว &middot; รูป ' + (r.headers.get('X-Report-Images') || 0) + ' ไฟล์';
+      } catch (e) {
+        hint.textContent = 'สร้างรายงานไม่สำเร็จ';
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = label;
+      }
     }
 
     async function logout() {

@@ -36,9 +36,10 @@ app.use('/', auth.requireAuth, express.static(path.join(__dirname, 'public')));
 setInterval(() => {
   const readsDays = parseInt(process.env.READS_KEEP_DAYS, 10) || 90;
   const healthDays = parseInt(process.env.HEALTH_KEEP_DAYS, 10) || 14;
-  const result = prune(readsDays, healthDays);
-  if (result.reads || result.health) {
-    console.log(`prune: removed ${result.reads} reads, ${result.health} health samples`);
+  const imageDays = parseInt(process.env.IMAGES_KEEP_DAYS, 10) || 30;
+  const result = prune(readsDays, healthDays, imageDays);
+  if (result.reads || result.health || result.images) {
+    console.log(`prune: removed ${result.reads} reads, ${result.health} health samples, ${result.images} images`);
   }
 }, 3600000);
 

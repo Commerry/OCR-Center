@@ -1,5 +1,8 @@
 const express = require('express');
+const fs = require('fs');
 const { statements, reorderGroups, deleteDevice } = require('../db');
+const report = require('../report');
+const imageStore = require('../imageStore');
 
 // Dashboard-facing REST API
 const router = express.Router();
@@ -91,6 +94,95 @@ router.delete('/groups/:id', (req, res) => {
   statements.clearGroupMembers.run(req.params.id); // members go back to Unassigned
   statements.deleteGroup.run(req.params.id);
   res.json({ success: true });
+});
+
+// ---- Reports ----
+// Devices to include: an explicit list, or every device in a group, or all.
+const resolveScope = (body) => {
+  const all = statements.listDevices.all();
+  const wanted = Array.isArray(body.deviceIds) ? body.deviceIds.filter(Boolean) : [];
+  if (wanted.length) {
+    const known = new Set(all.map((d) => d.device_id));
+    const ids = wanted.filter((id) => known.has(id));
+    const names = all.filter((d) => ids.includes(d.device_id)).map((d) => d.hostname || d.device_id);
+    return { ids, label: 'อุปกรณ์ที่เลือก ' + ids.length + ' เครื่อง (' + names.join(', ') + ')' };
+  }
+  if (body.groupId === 'unassigned') {
+    const ids = all.filter((d) => !d.group_id).map((d) => d.device_id);
+    return { ids, label: 'กลุ่ม: ยังไม่จัดกลุ่ม' };
+  }
+  if (body.groupId) {
+    const gid = Number(body.groupId);
+    const group = statements.listGroups.all().find((g) => g.id === gid);
+    const ids = all.filter((d) => d.group_id === gid).map((d) => d.device_id);
+    return { ids, label: 'กลุ่ม: ' + (group ? group.name : gid) };
+  }
+  return { ids: all.map((d) => d.device_id), label: 'ทุกอุปกรณ์' };
+};
+
+// Accepts local wall-clock strings from the form ("2026-09-08T08:00") and
+// turns them into the UTC ISO stamps the database stores.
+const toIso = (input, fallback) => {
+  if (!input) return fallback;
+  const d = new Date(input);
+  return Number.isNaN(d.getTime()) ? fallback : d.toISOString();
+};
+
+const reportParams = (body) => {
+  const now = new Date();
+  const to = toIso(body.to, now.toISOString());
+  const from = toIso(body.from, new Date(now.getTime() - 86400000).toISOString());
+  const scope = resolveScope(body);
+  return {
+    from,
+    to,
+    deviceIds: scope.ids,
+    scopeLabel: scope.label,
+    minConfidence: Number(body.minConfidence) || 0,
+    includeImages: body.includeImages !== false,
+  };
+};
+
+router.post('/reports/preview', (req, res) => {
+  try {
+    const p = reportParams(req.body || {});
+    return res.json({ success: true, scope: p.scopeLabel, ...report.preview(p) });
+  } catch (error) {
+    console.error('report preview failed:', error.message);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.post('/reports/export', (req, res) => {
+  let built = null;
+  try {
+    const p = reportParams(req.body || {});
+    if (!p.deviceIds.length) {
+      return res.json({ success: false, error: 'ไม่มีอุปกรณ์ในขอบเขตที่เลือก' });
+    }
+    built = report.build(p);
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', 'attachment; filename="' + built.name + '"');
+    res.setHeader('X-Report-Reads', String(built.reads));
+    res.setHeader('X-Report-Images', String(built.images));
+    const stream = fs.createReadStream(built.file);
+    stream.pipe(res);
+    stream.on('close', () => fs.unlink(built.file, () => {}));
+    return undefined;
+  } catch (error) {
+    console.error('report export failed:', error.message);
+    if (built && built.file) fs.unlink(built.file, () => {});
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.get('/reports/storage', (req, res) => {
+  res.json({
+    success: true,
+    images: statements.imageCount.get().n,
+    sizeMb: imageStore.usageMb(),
+    keepDays: parseInt(process.env.IMAGES_KEEP_DAYS, 10) || 30,
+  });
 });
 
 router.get('/settings', (req, res) => {
