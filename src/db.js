@@ -208,6 +208,13 @@ const ingestHeartbeat = db.transaction((payload) => {
   const now = new Date().toISOString();
   const device = payload.device || {};
 
+  // Devices that send one image per read need no fallback: the camera-level
+  // "lastImage" is the same frame as the newest read, and storing it as well
+  // would attach that picture to the wrong row.
+  const camerasWithReadImages = new Set(
+    (payload.recentReads || []).filter((r) => r.image).map((r) => r.camera),
+  );
+
   statements.upsertDevice.run({
     device_id: payload.deviceId,
     hostname: device.hostname || null,
@@ -242,7 +249,7 @@ const ingestHeartbeat = db.transaction((payload) => {
 
     // Keep the pushed image on disk so reports can attach it later.
     // One image per heartbeat at most: skip when this image_at was already stored.
-    if (cam.lastImage && cam.lastImageAt) {
+    if (cam.lastImage && cam.lastImageAt && !camerasWithReadImages.has(cam.cameraName)) {
       const seen = statements.hasImage.get(payload.deviceId, cam.cameraName, cam.lastImageAt);
       const wanted = imageStore.shouldStore({
         value: cam.lastRead ? cam.lastRead.value : null,
@@ -285,6 +292,31 @@ const ingestHeartbeat = db.transaction((payload) => {
       ocr_model: modelByCamera.get(read.camera) || null,
       at: read.at,
     });
+
+    // Devices send the frame of each read; that is what the report attaches.
+    // Keyed on the read time, so the image the camera also reports as
+    // "lastImage" is not stored twice.
+    if (!read.image) continue;
+    const already = statements.hasImage.get(payload.deviceId, read.camera, read.at);
+    if (already) continue;
+    if (!imageStore.shouldStore({ value: read.value, confidence: read.confidence })) continue;
+    const readFile = imageStore.saveImage({
+      deviceId: payload.deviceId,
+      value: read.value,
+      at: read.at,
+      base64: read.image,
+    });
+    if (readFile) {
+      statements.insertImage.run({
+        device_id: payload.deviceId,
+        camera: read.camera,
+        value: String(read.value),
+        confidence: read.confidence,
+        read_at: read.at,
+        image_at: read.at,
+        file: readFile,
+      });
+    }
   }
 
   if (payload.health) {
