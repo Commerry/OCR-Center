@@ -4,6 +4,7 @@ const path = require('path');
 const { db } = require('./db');
 const imageStore = require('./imageStore');
 const { ZipWriter } = require('./zip');
+const { localTime } = require('./localTime');
 
 /*
  * Report builder.
@@ -19,14 +20,6 @@ const { ZipWriter } = require('./zip');
  * below it are flagged as "ความมั่นใจต่ำ" so they can be rechecked by eye.
  */
 const FAIL_CODES = { 888: 'อ่านไม่เจอตัวเลข', 999: 'รูปแบบตัวเลขไม่ถูกต้อง' };
-const TZ = () => process.env.REPORT_TZ || 'Asia/Bangkok';
-
-const localTime = (iso) => {
-  if (!iso) return '';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return String(iso);
-  return d.toLocaleString('sv-SE', { timeZone: TZ() });
-};
 
 const pct = (n, d) => (d ? Math.round((n / d) * 10000) / 100 : 0);
 const confPct = (c) => (c === null || c === undefined ? '' : Math.round(c * 10000) / 100);
@@ -276,20 +269,45 @@ const summaryCsv = ({ devices, values, models, totals }, meta) => {
   return toCsv(out);
 };
 
-/** Numbers for the preview panel, without building any file. */
-const preview = ({ from, to, deviceIds, minConfidence }) => {
-  const rows = queryRows({ from, to, deviceIds });
-  const s = summarise(rows, minConfidence);
-  const withImage = rows.filter((r) => r.image_file).length;
+/**
+ * Numbers for the preview panel, without building any file.
+ * Counted in SQL: the dialog calls this on every change, and loading every
+ * row into node for a month of reads would stall the whole server.
+ */
+const preview = ({ from, to, deviceIds }) => {
+  const empty = { reads: 0, devices: 0, images: 0, ok: 0, failed: 0, accuracy: 0, models: [], withWeight: 0 };
+  if (!deviceIds || deviceIds.length === 0) return empty;
+  const marks = deviceIds.map(() => '?').join(',');
+  const where = `r.device_id IN (${marks}) AND r.at >= ? AND r.at <= ?`;
+
+  const t = db.prepare(`
+    SELECT COUNT(*) AS reads,
+           COUNT(DISTINCT r.device_id || '|' || r.camera) AS devices,
+           SUM(CASE WHEN r.value IN ('888', '999') THEN 1 ELSE 0 END) AS failed,
+           SUM(CASE WHEN i.file IS NOT NULL THEN 1 ELSE 0 END) AS images,
+           SUM(CASE WHEN r.weight IS NOT NULL THEN 1 ELSE 0 END) AS withWeight
+    FROM reads r
+    LEFT JOIN read_images i ON i.device_id = r.device_id AND i.camera = r.camera AND i.read_at = r.at
+    WHERE ${where}`).get(...deviceIds, from, to);
+
+  const models = db.prepare(`
+    SELECT DISTINCT COALESCE(r.ocr_model, c.ocr_model) AS model
+    FROM reads r
+    LEFT JOIN cameras c ON c.device_id = r.device_id AND c.camera_name = r.camera
+    WHERE ${where}
+    ORDER BY model`).all(...deviceIds, from, to).map((m) => modelLabel(m.model));
+
+  const reads = t.reads || 0;
+  const failed = t.failed || 0;
   return {
-    reads: rows.length,
-    devices: s.devices.length,
-    images: withImage,
-    ok: s.totals.ok,
-    failed: s.totals.notFound + s.totals.invalid,
-    accuracy: pct(s.totals.ok, s.totals.total),
-    models: s.models.map((m) => m.model),
-    withWeight: s.totals.weightN,
+    reads,
+    devices: t.devices || 0,
+    images: t.images || 0,
+    ok: reads - failed,
+    failed,
+    accuracy: pct(reads - failed, reads),
+    models: [...new Set(models)],
+    withWeight: t.withWeight || 0,
   };
 };
 

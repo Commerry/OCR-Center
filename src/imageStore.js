@@ -20,7 +20,7 @@ const path = require('path');
 const ROOT = process.env.IMAGES_DIR
   ? path.resolve(process.env.IMAGES_DIR)
   : path.join(__dirname, '..', 'data', 'images');
-const TZ = () => process.env.REPORT_TZ || 'Asia/Bangkok';
+const { localParts } = require('./localTime');
 
 const envInt = (name, fallback) => {
   const n = parseInt(process.env[name], 10);
@@ -34,15 +34,6 @@ const storeMode = () => (process.env.IMAGE_STORE_MODE || 'all').toLowerCase();
 fs.mkdirSync(ROOT, { recursive: true });
 
 const safe = (s) => String(s == null ? '' : s).replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 60);
-
-// "2026-09-08 14:30:05" in the configured timezone
-const localParts = (iso) => {
-  const d = new Date(iso);
-  const s = d.toLocaleString('sv-SE', { timeZone: TZ() }); // YYYY-MM-DD HH:mm:ss
-  const [date, time] = s.split(' ');
-  const ms = String(d.getUTCMilliseconds()).padStart(3, '0');
-  return { date, time, stamp: time.replace(/:/g, '') + '-' + ms };
-};
 
 /* ---------------------------------------------------------------- size ---- */
 

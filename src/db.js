@@ -76,6 +76,9 @@ CREATE TABLE IF NOT EXISTS read_images (
   UNIQUE (device_id, camera, image_at)
 );
 CREATE INDEX IF NOT EXISTS idx_read_images_device_at ON read_images (device_id, image_at DESC);
+-- reports join images to reads on read_at; without this the join scans every
+-- image of the camera for every read (quadratic - froze the server for minutes)
+CREATE INDEX IF NOT EXISTS idx_read_images_read ON read_images (device_id, camera, read_at);
 
 CREATE TABLE IF NOT EXISTS groups (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
