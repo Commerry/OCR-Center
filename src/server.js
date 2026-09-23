@@ -28,6 +28,20 @@ app.get('/api/settings', (req, res) => res.json({
   },
 }));
 
+// Version probe - public on purpose: it is how you check which build a machine
+// is really running without logging in.
+const startedAt = new Date();
+app.get('/api/health', (req, res) => {
+  res.json({
+    ok: true,
+    version: require('../package.json').version,
+    node: process.version,
+    startedAt: startedAt.toISOString(),
+    uptimeSec: Math.round(process.uptime()),
+    now: new Date().toISOString(),
+  });
+});
+
 // Dashboard API + dashboard itself (behind login when DASH_USER is set)
 app.use('/api', auth.requireAuth, apiRoutes);
 app.use('/', auth.requireAuth, express.static(path.join(__dirname, 'public')));

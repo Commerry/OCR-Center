@@ -22,8 +22,13 @@ if (!isMainThread) {
   }
 }
 
-/** Build a report in a worker. Resolves with { file, name, reads, images }. */
+/**
+ * Build a report in a worker. Resolves with { file, name, reads, images }.
+ * Gives up after REPORT_TIMEOUT_SEC (default 15 minutes) and kills the worker,
+ * so a report that goes wrong returns an error instead of hanging forever.
+ */
 const buildInWorker = (params) => new Promise((resolve, reject) => {
+  const timeoutSec = Math.max(30, parseInt(process.env.REPORT_TIMEOUT_SEC, 10) || 900);
   const worker = new Worker(__filename, {
     workerData: params,
     // the worker only reads; keep its heap modest so a runaway report fails
@@ -32,9 +37,17 @@ const buildInWorker = (params) => new Promise((resolve, reject) => {
   });
 
   let settled = false;
+  const timer = setTimeout(() => {
+    worker.terminate();
+    // eslint-disable-next-line no-use-before-define
+    done(reject, new Error(`สร้างรายงานนานเกิน ${timeoutSec} วินาที - ลดช่วงเวลาหรือปิดการแนบรูป`));
+  }, timeoutSec * 1000);
+  timer.unref();
+
   const done = (fn, arg) => {
     if (settled) return;
     settled = true;
+    clearTimeout(timer);
     fn(arg);
   };
 

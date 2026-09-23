@@ -138,6 +138,26 @@ Center บันทึกรูปทุกครั้งที่อุปก�
 
 > อุปกรณ์ส่งรูปมาให้รอบละ 1 ใบ (รูปของการอ่านครั้งล่าสุด) ถ้ามีการอ่านหลายครั้งภายในรอบเดียวกัน จะมีรูปเฉพาะครั้งท้ายสุด แถวอื่นใน detail.csv จะเว้นช่องไฟล์รูปไว้
 
+## ออกรายงานจากบรรทัดคำสั่ง (ไม่ต้องผ่านเว็บ)
+
+ใช้ได้เสมอแม้เบราว์เซอร์มีปัญหา และใช้ดูว่าช้าตรงไหน (บอกจำนวนแถว เวลาที่ใช้ และแรมสูงสุด):
+
+```bash
+cd ~/Desktop/OCR-Center-main
+node tools/export-report.js --count-only --days 30        # ดูว่ามีกี่แถว กี่รูป ก่อนออกจริง
+node tools/export-report.js --days 7 --out ~/report.zip   # ออกจริง 7 วันล่าสุด
+node tools/export-report.js --days 30 --no-images         # ไม่แนบรูป ไฟล์เล็กและเร็วกว่ามาก
+node tools/export-report.js --from 2026-09-01 --to 2026-09-23
+node tools/export-report.js --device d8:3a:dd:42:a4:ef --days 1
+```
+
+## เช็คว่าเครื่องรันเวอร์ชันไหนอยู่
+
+```bash
+curl -s http://localhost:8090/api/health
+```
+ตอบ `{"ok":true,"version":"1.2.0","node":"...","uptimeSec":...}` — ไม่ต้อง login เอาไว้ยืนยันว่าอัปเดตขึ้นจริงแล้ว
+
 ## Dashboard API
 
 - `GET /api/summary` — จำนวน online/offline/alerts

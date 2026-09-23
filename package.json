@@ -1,6 +1,6 @@
 {
   "name": "ocr-center",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "description": "Central monitoring server for STA-SK OCR camera fleet (CM4 devices)",
   "main": "src/server.js",
   "scripts": {

@@ -171,7 +171,11 @@ const sendReport = async (req, res, params) => {
     }
     // built in a worker thread: better-sqlite3 is synchronous, so building it
     // here would freeze the dashboard and stall heartbeats until it finished
+    const startedAt = Date.now();
+    console.log(`report: building (${p.scopeLabel}, ${p.from} -> ${p.to}, images ${p.includeImages ? 'on' : 'off'})`);
     built = await buildInWorker(p);
+    console.log(`report: done in ${((Date.now() - startedAt) / 1000).toFixed(1)}s - `
+      + `${built.reads} reads, ${built.images} images, ${Math.round(fs.statSync(built.file).size / 1048576)} MB`);
     res.setHeader('Content-Type', 'application/zip');
     res.setHeader('Content-Disposition', 'attachment; filename="' + built.name + '"');
     res.setHeader('X-Report-Reads', String(built.reads));
