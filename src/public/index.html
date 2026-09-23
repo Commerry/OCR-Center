@@ -363,6 +363,7 @@
       <svg class="icon"><use href="#i-logout"/></svg>
     </button>
     <div class="refresh-note" id="refreshNote">refreshing...</div>
+    <iframe id="repFrame" style="display:none" title="report download"></iframe>
   </header>
 
   <main class="wrap" id="main">
@@ -954,40 +955,42 @@
       }
     }
 
-    async function downloadReport() {
+    function downloadReport() {
       const btn = document.getElementById('repDownload');
       const hint = document.getElementById('repHint');
-      const label = btn.innerHTML;
+      const b = repBody();
+      if (!b.from || !b.to) { hint.textContent = 'เลือกช่วงเวลาก่อน'; return; }
+
+      // Navigate to the download instead of fetch()+blob: the browser writes
+      // the file straight to disk and shows its own progress. Pulling a report
+      // with images through memory used to freeze and kill the tab.
+      const q = new URLSearchParams({
+        from: b.from,
+        to: b.to,
+        groupId: b.groupId || '',
+        deviceIds: (b.deviceIds || []).join(','),
+        minConfidence: String(b.minConfidence || 0),
+        includeImages: b.includeImages ? 'true' : 'false',
+      });
+      const frame = document.getElementById('repFrame');
+      // a successful download never navigates the frame, so a load event that
+      // carries text means the server answered with an error instead
+      frame.onload = () => {
+        try {
+          const text = (frame.contentDocument && frame.contentDocument.body.innerText || '').trim();
+          if (!text) return;
+          let msg = text;
+          try { msg = JSON.parse(text).error || text; } catch (e) { /* plain text */ }
+          hint.textContent = 'สร้างรายงานไม่สำเร็จ: ' + msg;
+        } catch (e) { /* cross-origin or empty - ignore */ }
+      };
+      frame.src = '/api/reports/export?' + q.toString();
+
+      hint.innerHTML = 'กำลังสร้างไฟล์บนเซิร์ฟเวอร์... ' +
+        'ไฟล์จะเริ่มดาวน์โหลดเองเมื่อเสร็จ (ข้อมูลเยอะอาจใช้เวลาหลายสิบวินาที) ' +
+        'ระหว่างนี้ใช้งานหน้าเว็บต่อได้ตามปกติ';
       btn.disabled = true;
-      btn.innerHTML = 'กำลังสร้างไฟล์...';
-      try {
-        const r = await fetch('/api/reports/export', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(repBody()),
-        });
-        if (!r.ok || (r.headers.get('content-type') || '').includes('application/json')) {
-          const d = await r.json().catch(() => ({}));
-          hint.textContent = d.error || 'สร้างรายงานไม่สำเร็จ';
-          return;
-        }
-        const blob = await r.blob();
-        const name = (r.headers.get('content-disposition') || '').match(/filename="([^"]+)"/);
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = name ? name[1] : 'ocr-report.zip';
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        URL.revokeObjectURL(url);
-        hint.innerHTML = 'ดาวน์โหลดแล้ว &middot; ' + (r.headers.get('X-Report-Reads') || 0) +
-          ' แถว &middot; รูป ' + (r.headers.get('X-Report-Images') || 0) + ' ไฟล์';
-      } catch (e) {
-        hint.textContent = 'สร้างรายงานไม่สำเร็จ';
-      } finally {
-        btn.disabled = false;
-        btn.innerHTML = label;
-      }
+      setTimeout(() => { btn.disabled = false; }, 3000);
     }
 
     async function logout() {

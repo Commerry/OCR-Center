@@ -85,7 +85,6 @@ const iterateRows = function* iterateRows({ from, to, deviceIds }) {
 
 const deviceLabel = (row) => row.display_name || row.camera || row.hostname || row.device_id;
 
-/** Counts used by both the preview and the summary sheet. */
 /**
  * Running counts for the summary sheet.
  *
@@ -378,7 +377,16 @@ const build = ({ from, to, deviceIds, minConfidence, includeImages, scopeLabel, 
   };
 
   const stamp = localTime(new Date().toISOString()).replace(/[-: ]/g, '').slice(0, 14);
-  const tmpBase = path.join(os.tmpdir(), `ocr-report-${stamp}-${process.pid}`);
+  // data/tmp by default: /tmp is RAM-backed (tmpfs) on many Linux installs, and
+  // a report with images can be gigabytes
+  const tmpDir = process.env.REPORT_TMP_DIR || path.join(__dirname, '..', 'data', 'tmp');
+  try {
+    fs.mkdirSync(tmpDir, { recursive: true });
+  } catch (error) {
+    // fall back to the system temp folder if data/ is not writable
+  }
+  const base = fs.existsSync(tmpDir) ? tmpDir : os.tmpdir();
+  const tmpBase = path.join(base, `ocr-report-${stamp}-${process.pid}`);
   const detailFile = `${tmpBase}-detail.csv`;
   const zipFile = `${tmpBase}.zip`;
 

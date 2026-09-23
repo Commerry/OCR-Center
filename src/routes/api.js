@@ -129,7 +129,15 @@ const toIso = (input, fallback) => {
   return Number.isNaN(d.getTime()) ? fallback : d.toISOString();
 };
 
-const reportParams = (body) => {
+const reportParams = (raw) => {
+  // a GET download sends everything as strings in the query
+  const body = {
+    ...raw,
+    deviceIds: Array.isArray(raw.deviceIds)
+      ? raw.deviceIds
+      : String(raw.deviceIds || '').split(',').filter(Boolean),
+    includeImages: raw.includeImages !== false && raw.includeImages !== 'false',
+  };
   const now = new Date();
   const to = toIso(body.to, now.toISOString());
   const from = toIso(body.from, new Date(now.getTime() - 86400000).toISOString());
@@ -154,10 +162,10 @@ router.post('/reports/preview', (req, res) => {
   }
 });
 
-router.post('/reports/export', async (req, res) => {
+const sendReport = async (req, res, params) => {
   let built = null;
   try {
-    const p = reportParams(req.body || {});
+    const p = reportParams(params);
     if (!p.deviceIds.length) {
       return res.json({ success: false, error: 'ไม่มีอุปกรณ์ในขอบเขตที่เลือก' });
     }
@@ -177,7 +185,20 @@ router.post('/reports/export', async (req, res) => {
     if (built && built.file) fs.unlink(built.file, () => {});
     return res.status(500).json({ success: false, error: error.message });
   }
-});
+};
+
+// POST keeps working for scripts; the dashboard uses the GET below.
+router.post('/reports/export', (req, res) => sendReport(req, res, req.body || {}));
+
+/*
+ * Download link used by the browser.
+ *
+ * The page used to fetch() the archive and hand it to createObjectURL, which
+ * meant the whole report - CSV plus every image - sat in the tab's memory
+ * twice; a month of reads froze the tab and took the page down with it.
+ * Navigating to this URL lets the browser stream the file straight to disk.
+ */
+router.get('/reports/export', (req, res) => sendReport(req, res, req.query || {}));
 
 router.get('/reports/storage', (req, res) => {
   res.json({
