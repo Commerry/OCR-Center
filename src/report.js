@@ -29,7 +29,9 @@ const csvCell = (v) => {
   return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
 };
 // BOM so Excel opens Thai text correctly, CRLF so it looks right on Windows
-const toCsv = (rows) => '﻿' + rows.map((r) => r.map(csvCell).join(',')).join('\r\n') + '\r\n';
+const BOM = '﻿';
+const CRLF = '\r\n';
+const toCsv = (rows) => BOM + rows.map((r) => r.map(csvCell).join(',')).join(CRLF) + CRLF;
 
 const num = (n, digits = 3) => (typeof n === 'number' && Number.isFinite(n)
   ? Math.round(n * 10 ** digits) / 10 ** digits : '');
@@ -58,14 +60,45 @@ const queryRows = ({ from, to, deviceIds }) => {
   return db.prepare(sql).all(...deviceIds, from, to);
 };
 
+/**
+ * Same rows, one at a time. A month of reads is hundreds of thousands of rows;
+ * loading them all into an array (plus the CSV built from them) is what made
+ * the export run the server out of memory.
+ */
+const iterateRows = function* iterateRows({ from, to, deviceIds }) {
+  if (!deviceIds || deviceIds.length === 0) return;
+  const marks = deviceIds.map(() => '?').join(',');
+  const sql = `
+    SELECT r.device_id, r.camera, r.value, r.confidence, r.at,
+           r.weight, COALESCE(r.ocr_model, c.ocr_model) AS ocr_model,
+           d.hostname, d.ip, c.display_name, c.letter_read, g.name AS group_name,
+           i.file AS image_file
+    FROM reads r
+    LEFT JOIN devices d ON d.device_id = r.device_id
+    LEFT JOIN groups  g ON g.id = d.group_id
+    LEFT JOIN cameras c ON c.device_id = r.device_id AND c.camera_name = r.camera
+    LEFT JOIN read_images i ON i.device_id = r.device_id AND i.camera = r.camera AND i.read_at = r.at
+    WHERE r.device_id IN (${marks}) AND r.at >= ? AND r.at <= ?
+    ORDER BY r.at ASC`;
+  yield* db.prepare(sql).iterate(...deviceIds, from, to);
+};
+
 const deviceLabel = (row) => row.display_name || row.camera || row.hostname || row.device_id;
 
 /** Counts used by both the preview and the summary sheet. */
-const summarise = (rows, minConfidence) => {
+/**
+ * Running counts for the summary sheet.
+ *
+ * Fed one row at a time so a report never holds the rows themselves: the maps
+ * grow with the number of devices, values and models - not with the number of
+ * reads.
+ */
+const createSummary = (minConfidence) => {
   const byDevice = new Map();
   const byValue = new Map();
+  const byModel = new Map();
 
-  for (const r of rows) {
+  const add = (r) => {
     const key = r.device_id + '|' + r.camera;
     if (!byDevice.has(key)) {
       byDevice.set(key, {
@@ -78,17 +111,20 @@ const summarise = (rows, minConfidence) => {
       });
     }
     const d = byDevice.get(key);
+    const modelName = modelLabel(r.ocr_model);
+    const status = String(r.value);
+    const lowConf = typeof r.confidence === 'number'
+      && minConfidence > 0 && r.confidence * 100 < minConfidence;
+
     d.total += 1;
     if (r.image_file) d.withImage += 1;
-    d.models.add(modelLabel(r.ocr_model));
+    d.models.add(modelName);
     if (typeof r.weight === 'number') {
       d.weightSum += r.weight;
       d.weightN += 1;
       d.weightMin = d.weightMin === null ? r.weight : Math.min(d.weightMin, r.weight);
       d.weightMax = d.weightMax === null ? r.weight : Math.max(d.weightMax, r.weight);
     }
-
-    const status = String(r.value);
     if (status === '888') d.notFound += 1;
     else if (status === '999') d.invalid += 1;
     else {
@@ -96,7 +132,7 @@ const summarise = (rows, minConfidence) => {
       if (typeof r.confidence === 'number') {
         d.confSum += r.confidence;
         d.confN += 1;
-        if (minConfidence > 0 && r.confidence * 100 < minConfidence) d.lowConf += 1;
+        if (lowConf) d.lowConf += 1;
       }
     }
 
@@ -122,82 +158,92 @@ const summarise = (rows, minConfidence) => {
       v.confN += 1;
       v.confMin = v.confMin === null ? r.confidence : Math.min(v.confMin, r.confidence);
     }
-  }
 
-  // per-model rollup: lets two model versions be compared on the same data
-  const byModel = new Map();
-  for (const r of rows) {
-    const name = modelLabel(r.ocr_model);
-    if (!byModel.has(name)) {
-      byModel.set(name, {
-        model: name, devices: new Set(),
+    // per-model rollup: lets two model versions be compared on the same data
+    if (!byModel.has(modelName)) {
+      byModel.set(modelName, {
+        model: modelName, devices: new Set(),
         total: 0, ok: 0, notFound: 0, invalid: 0, lowConf: 0, confSum: 0, confN: 0,
       });
     }
-    const m = byModel.get(name);
-    m.devices.add(r.device_id + '|' + r.camera);
+    const m = byModel.get(modelName);
+    m.devices.add(key);
     m.total += 1;
-    const st = String(r.value);
-    if (st === '888') m.notFound += 1;
-    else if (st === '999') m.invalid += 1;
+    if (status === '888') m.notFound += 1;
+    else if (status === '999') m.invalid += 1;
     else {
       m.ok += 1;
       if (typeof r.confidence === 'number') {
         m.confSum += r.confidence;
         m.confN += 1;
-        if (minConfidence > 0 && r.confidence * 100 < minConfidence) m.lowConf += 1;
+        if (lowConf) m.lowConf += 1;
       }
     }
-  }
+  };
 
-  const devices = [...byDevice.values()].sort((a, b) =>
-    a.group.localeCompare(b.group, 'th') || a.device.localeCompare(b.device, 'th'));
-  const values = [...byValue.values()].sort((a, b) =>
-    a.device.localeCompare(b.device, 'th') || b.count - a.count);
-  const models = [...byModel.values()].sort((a, b) => b.total - a.total);
+  const result = () => {
+    const devices = [...byDevice.values()].sort((a, b) =>
+      a.group.localeCompare(b.group, 'th') || a.device.localeCompare(b.device, 'th'));
+    const values = [...byValue.values()].sort((a, b) =>
+      a.device.localeCompare(b.device, 'th') || b.count - a.count);
+    const models = [...byModel.values()].sort((a, b) => b.total - a.total);
 
-  const totals = devices.reduce((t, d) => ({
-    total: t.total + d.total, ok: t.ok + d.ok, notFound: t.notFound + d.notFound,
-    invalid: t.invalid + d.invalid, lowConf: t.lowConf + d.lowConf,
-    withImage: t.withImage + d.withImage, confSum: t.confSum + d.confSum, confN: t.confN + d.confN,
-    weightSum: t.weightSum + d.weightSum, weightN: t.weightN + d.weightN,
-  }), {
-    total: 0, ok: 0, notFound: 0, invalid: 0, lowConf: 0, withImage: 0, confSum: 0, confN: 0,
-    weightSum: 0, weightN: 0,
-  });
+    const totals = devices.reduce((t, d) => ({
+      total: t.total + d.total, ok: t.ok + d.ok, notFound: t.notFound + d.notFound,
+      invalid: t.invalid + d.invalid, lowConf: t.lowConf + d.lowConf,
+      withImage: t.withImage + d.withImage, confSum: t.confSum + d.confSum, confN: t.confN + d.confN,
+      weightSum: t.weightSum + d.weightSum, weightN: t.weightN + d.weightN,
+    }), {
+      total: 0, ok: 0, notFound: 0, invalid: 0, lowConf: 0, withImage: 0, confSum: 0, confN: 0,
+      weightSum: 0, weightN: 0,
+    });
 
-  return { devices, values, models, totals };
+    return { devices, values, models, totals };
+  };
+
+  return { add, result };
 };
 
-const detailCsv = (rows, minConfidence) => {
-  const out = [[
-    'ลำดับ', 'วันที่เวลา', 'กลุ่ม', 'อุปกรณ์', 'IP', 'กล้อง',
-    'เลขที่อ่านได้', 'สถานะ', 'ความมั่นใจ (%)', 'ต่ำกว่าเกณฑ์',
-    'โมเดลที่ใช้', 'อ่านตัวอักษรนำหน้า', 'น้ำหนัก', 'ไฟล์รูป',
-  ]];
-  rows.forEach((r, i) => {
-    const ok = !isFail(r.value);
-    const low = ok && minConfidence > 0 && typeof r.confidence === 'number'
-      && r.confidence * 100 < minConfidence;
-    out.push([
-      i + 1,
-      localTime(r.at),
-      r.group_name || 'ยังไม่จัดกลุ่ม',
-      deviceLabel(r),
-      r.ip || '',
-      r.camera,
-      r.value,
-      statusOf(r.value),
-      confPct(r.confidence),
-      low ? 'ใช่' : '',
-      modelLabel(r.ocr_model),
-      r.letter_read ? 'เปิด' : 'ปิด',
-      num(r.weight),
-      r.image_file ? 'images/' + r.image_file : '',
-    ]);
-  });
-  return toCsv(out);
+/** Counts for a set of rows already in memory (used by tests). */
+const summarise = (rows, minConfidence) => {
+  const acc = createSummary(minConfidence);
+  for (const r of rows) acc.add(r);
+  return acc.result();
 };
+
+const DETAIL_HEADER = [
+  'ลำดับ', 'วันที่เวลา', 'กลุ่ม', 'อุปกรณ์', 'IP', 'กล้อง',
+  'เลขที่อ่านได้', 'สถานะ', 'ความมั่นใจ (%)', 'ต่ำกว่าเกณฑ์',
+  'โมเดลที่ใช้', 'อ่านตัวอักษรนำหน้า', 'น้ำหนัก', 'ไฟล์รูป',
+];
+
+const detailRow = (r, index, minConfidence) => {
+  const ok = !isFail(r.value);
+  const low = ok && minConfidence > 0 && typeof r.confidence === 'number'
+    && r.confidence * 100 < minConfidence;
+  return [
+    index,
+    localTime(r.at),
+    r.group_name || 'ยังไม่จัดกลุ่ม',
+    deviceLabel(r),
+    r.ip || '',
+    r.camera,
+    r.value,
+    statusOf(r.value),
+    confPct(r.confidence),
+    low ? 'ใช่' : '',
+    modelLabel(r.ocr_model),
+    r.letter_read ? 'เปิด' : 'ปิด',
+    num(r.weight),
+    r.image_file ? 'images/' + r.image_file : '',
+  ];
+};
+
+/** Whole sheet at once - used by tests; the export streams rows instead. */
+const detailCsv = (rows, minConfidence) => toCsv([
+  DETAIL_HEADER,
+  ...rows.map((r, i) => detailRow(r, i + 1, minConfidence)),
+]);
 
 const summaryCsv = ({ devices, values, models, totals }, meta) => {
   const out = [];
@@ -311,9 +357,19 @@ const preview = ({ from, to, deviceIds }) => {
   };
 };
 
-/** Build the ZIP. Returns { file, name, reads, images } - caller deletes `file`. */
-const build = ({ from, to, deviceIds, minConfidence, includeImages, scopeLabel }) => {
-  const rows = queryRows({ from, to, deviceIds });
+/**
+ * Build the ZIP. Returns { file, name, reads, images } - caller deletes `file`.
+ *
+ * Rows are streamed: read one at a time from SQLite, written straight into a
+ * temporary detail.csv through a small buffer, and counted into the summary as
+ * they pass. Nothing proportional to the number of reads is ever held in
+ * memory - the previous version built an array of every row plus one giant CSV
+ * string, which made a month-sized export run the server out of memory and
+ * take the whole site down with it.
+ */
+const WRITE_CHUNK = 256 * 1024;
+
+const build = ({ from, to, deviceIds, minConfidence, includeImages, scopeLabel, onProgress }) => {
   const meta = {
     fromLabel: localTime(from),
     toLabel: localTime(to),
@@ -322,32 +378,65 @@ const build = ({ from, to, deviceIds, minConfidence, includeImages, scopeLabel }
   };
 
   const stamp = localTime(new Date().toISOString()).replace(/[-: ]/g, '').slice(0, 14);
-  const tmp = path.join(os.tmpdir(), `ocr-report-${stamp}-${process.pid}.zip`);
-  const zip = new ZipWriter(tmp);
+  const tmpBase = path.join(os.tmpdir(), `ocr-report-${stamp}-${process.pid}`);
+  const detailFile = `${tmpBase}-detail.csv`;
+  const zipFile = `${tmpBase}.zip`;
 
-  zip.addText('detail.csv', detailCsv(rows, minConfidence));
-  zip.addText('summary.csv', summaryCsv(summarise(rows, minConfidence), meta));
+  const summary = createSummary(minConfidence);
+  const imageFiles = new Set();
+  let reads = 0;
 
-  let images = 0;
-  if (includeImages) {
-    const seen = new Set();
-    for (const r of rows) {
-      if (!r.image_file || seen.has(r.image_file)) continue;
-      seen.add(r.image_file);
-      const abs = imageStore.absPath(r.image_file);
-      if (!fs.existsSync(abs)) continue;
-      zip.add('images/' + r.image_file, null, abs);
-      images += 1;
+  // --- pass 1: rows -> detail.csv on disk, counts in memory ---
+  const fd = fs.openSync(detailFile, 'w');
+  try {
+    let buffer = BOM + DETAIL_HEADER.map(csvCell).join(',') + CRLF;
+    for (const r of iterateRows({ from, to, deviceIds })) {
+      reads += 1;
+      summary.add(r);
+      if (r.image_file) imageFiles.add(r.image_file);
+      buffer += detailRow(r, reads, minConfidence).map(csvCell).join(',') + CRLF;
+      if (buffer.length >= WRITE_CHUNK) {
+        fs.writeSync(fd, buffer, null, 'utf8');
+        buffer = '';
+        if (onProgress) onProgress({ reads });
+      }
     }
+    if (buffer) fs.writeSync(fd, buffer, null, 'utf8');
+  } finally {
+    fs.closeSync(fd);
   }
-  zip.close();
+
+  // --- pass 2: assemble the archive ---
+  const zip = new ZipWriter(zipFile);
+  let images = 0;
+  try {
+    zip.add('detail.csv', null, detailFile);
+    zip.addText('summary.csv', summaryCsv(summary.result(), meta));
+
+    if (includeImages) {
+      for (const file of imageFiles) {
+        const abs = imageStore.absPath(file);
+        if (!fs.existsSync(abs)) continue;
+        zip.add('images/' + file, null, abs);
+        images += 1;
+        if (onProgress && images % 200 === 0) onProgress({ reads, images });
+      }
+    }
+    zip.close();
+  } catch (error) {
+    try { if (zip.fd !== null) zip.close(); } catch (e) { /* already closed */ }
+    fs.unlink(zipFile, () => {});
+    throw error;
+  } finally {
+    fs.unlink(detailFile, () => {});
+  }
 
   return {
-    file: tmp,
+    file: zipFile,
     name: `ocr-report-${stamp}.zip`,
-    reads: rows.length,
+    reads,
     images,
   };
 };
 
-module.exports = { build, preview, queryRows, summarise };
+module.exports = { build, preview, queryRows, iterateRows, summarise, detailCsv };

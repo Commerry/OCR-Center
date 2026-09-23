@@ -2,6 +2,7 @@ const express = require('express');
 const fs = require('fs');
 const { statements, reorderGroups, deleteDevice } = require('../db');
 const report = require('../report');
+const { buildInWorker } = require('../reportWorker');
 const imageStore = require('../imageStore');
 
 // Dashboard-facing REST API
@@ -153,14 +154,16 @@ router.post('/reports/preview', (req, res) => {
   }
 });
 
-router.post('/reports/export', (req, res) => {
+router.post('/reports/export', async (req, res) => {
   let built = null;
   try {
     const p = reportParams(req.body || {});
     if (!p.deviceIds.length) {
       return res.json({ success: false, error: 'ไม่มีอุปกรณ์ในขอบเขตที่เลือก' });
     }
-    built = report.build(p);
+    // built in a worker thread: better-sqlite3 is synchronous, so building it
+    // here would freeze the dashboard and stall heartbeats until it finished
+    built = await buildInWorker(p);
     res.setHeader('Content-Type', 'application/zip');
     res.setHeader('Content-Disposition', 'attachment; filename="' + built.name + '"');
     res.setHeader('X-Report-Reads', String(built.reads));
