@@ -176,6 +176,18 @@ const sendReport = async (req, res, params) => {
     built = await buildInWorker(p);
     console.log(`report: done in ${((Date.now() - startedAt) / 1000).toFixed(1)}s - `
       + `${built.reads} reads, ${built.images} images, ${Math.round(fs.statSync(built.file).size / 1048576)} MB`);
+
+    // An archive holding nothing but CSV headers looks like a broken export.
+    // Say what actually happened: the scope matched no reads.
+    if (built.reads === 0) {
+      fs.unlink(built.file, () => {});
+      const span = `${p.from.slice(0, 16).replace('T', ' ')} - ${p.to.slice(0, 16).replace('T', ' ')} UTC`;
+      return res.json({
+        success: false,
+        error: `ไม่มีข้อมูลการอ่านในช่วงที่เลือก (${p.scopeLabel}, ${span}) `
+          + 'ลองขยายช่วงเวลา หรือเลือกอุปกรณ์อื่น - อุปกรณ์ที่เพิ่งต่อเข้าระบบจะยังไม่มีประวัติย้อนหลัง',
+      });
+    }
     res.setHeader('Content-Type', 'application/zip');
     res.setHeader('Content-Disposition', 'attachment; filename="' + built.name + '"');
     res.setHeader('X-Report-Reads', String(built.reads));
