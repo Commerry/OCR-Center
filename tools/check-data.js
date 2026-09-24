@@ -45,22 +45,45 @@ const rows = db.prepare(`
 `).all(from, to);
 
 const pad = (s, n) => String(s === null || s === undefined ? '-' : s).padEnd(n).slice(0, n);
-console.log(pad('อุปกรณ์', 22) + pad('IP', 16) + pad('reads ทั้งหมด', 14) + pad('ในช่วงที่เลือก', 16) + 'อ่านล่าสุด');
-console.log('-'.repeat(96));
+// last_seen comes from the center's own clock when a heartbeat arrives, while
+// a read's time comes from the camera. Showing both apart tells a camera that
+// stopped reporting from one whose clock is wrong.
+console.log(pad('อุปกรณ์', 18) + pad('IP', 16) + pad('reads', 10) + pad('ในช่วง', 9)
+  + pad('อ่านล่าสุด (เวลากล้อง)', 26) + 'heartbeat ล่าสุด (เวลา Center)');
+console.log('-'.repeat(110));
+const skewed = [];
+const silent = [];
 for (const r of rows) {
   console.log(
-    pad(r.hostname || r.device_id, 22)
+    pad(r.hostname || r.device_id, 18)
     + pad(r.ip, 16)
-    + pad(r.total, 14)
-    + pad(r.inrange, 16)
-    + local(r.newest),
+    + pad(r.total, 10)
+    + pad(r.inrange, 9)
+    + pad(local(r.newest), 26)
+    + local(r.last_seen),
   );
+  const seenAgo = r.last_seen ? (Date.now() - Date.parse(r.last_seen)) / 60000 : Infinity;
+  const readAgo = r.newest ? (Date.now() - Date.parse(r.newest)) / 60000 : Infinity;
+  if (seenAgo < 30 && readAgo > 24 * 60) skewed.push(r);
+  else if (seenAgo > 30) silent.push(r);
+}
+
+if (skewed.length) {
+  console.log('');
+  console.log(`นาฬิกาเพี้ยน ${skewed.length} ตัว: heartbeat เข้ามาปกติ แต่เวลาที่ติดมากับค่าที่อ่านได้เป็นอดีต`);
+  console.log('ค่าที่อ่านได้เลยไปกองอยู่ในวันเก่า ทำให้รายงานของช่วงปัจจุบันว่าง แก้ที่กล้อง:');
+  for (const r of skewed) {
+    console.log(`   ssh pi@${r.ip} "sudo timedatectl set-time '$(date '+%Y-%m-%d %H:%M:%S')'; sudo hwclock -w"`);
+  }
+}
+if (silent.length) {
+  console.log('');
+  console.log(`ไม่ส่ง heartbeat มาเลย ${silent.length} ตัว - กล้องอาจปิด, เน็ตไม่ถึง, หรือปิดการส่งไป Center`);
+  for (const r of silent) console.log(`   ${pad(r.hostname || r.device_id, 16)} ${pad(r.ip, 16)} heartbeat ล่าสุด ${local(r.last_seen)}`);
 }
 
 const empty = rows.filter((r) => r.inrange === 0);
 if (empty.length) {
   console.log('');
   console.log(`อุปกรณ์ที่ไม่มีข้อมูลในช่วงนี้ ${empty.length} ตัว - เลือกตัวพวกนี้จะได้รายงานเปล่า`);
-  console.log('สาเหตุที่พบบ่อย: กล้องยังไม่ได้เปิดส่งข้อมูลไป Center, เพิ่งต่อเข้าระบบ,');
-  console.log('หรือนาฬิกาของกล้องเพี้ยนจนเวลาที่บันทึกไม่ตรงกับช่วงที่เลือก');
 }
