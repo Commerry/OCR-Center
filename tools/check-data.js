@@ -70,11 +70,12 @@ for (const r of rows) {
 
 if (skewed.length) {
   console.log('');
-  console.log(`นาฬิกาเพี้ยน ${skewed.length} ตัว: heartbeat เข้ามาปกติ แต่เวลาที่ติดมากับค่าที่อ่านได้เป็นอดีต`);
-  console.log('ค่าที่อ่านได้เลยไปกองอยู่ในวันเก่า ทำให้รายงานของช่วงปัจจุบันว่าง แก้ที่กล้อง:');
-  for (const r of skewed) {
-    console.log(`   ssh pi@${r.ip} "sudo timedatectl set-time '$(date '+%Y-%m-%d %H:%M:%S')'; sudo hwclock -w"`);
-  }
+  console.log(`ออนไลน์อยู่แต่ไม่มีค่าอ่านใหม่ ${skewed.length} ตัว - heartbeat เข้ามาปกติ แต่ค่าที่อ่านได้ล่าสุดเป็นของเก่า`);
+  console.log('เป็นไปได้ 3 อย่าง เรียงจากที่เจอบ่อยสุด:');
+  console.log('  1. โปรแกรมกล้องไม่ทำงาน (python ไม่ขึ้น) - เช็ค: ssh pi@<ip> "pm2 list; pgrep -af main.py"');
+  console.log('  2. PLC ไม่ทริกเลย จึงไม่มีการอ่าน - ดูที่หน้าเว็บกล้องว่ามีภาพและมีการอ่านสดไหม');
+  console.log('  3. นาฬิกากล้องเพี้ยน ค่าที่อ่านได้ไปกองในวันเก่า - เช็ค: ssh pi@<ip> date');
+  for (const r of skewed) console.log(`   ${r.ip}  อ่านล่าสุด ${local(r.newest)}  heartbeat ${local(r.last_seen)}`);
 }
 if (silent.length) {
   console.log('');
