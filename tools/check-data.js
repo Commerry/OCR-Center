@@ -36,6 +36,10 @@ console.log(`reads ทั้งหมด: ${totals.n} แถว  (เก่า�
 console.log(`รูปทั้งหมด   : ${db.prepare('SELECT COUNT(*) AS n FROM read_images').get().n} ใบ`);
 console.log('');
 
+// five minutes of slack: a read landing a few seconds ahead is just the gap
+// between the camera taking it and the center storing it, not a bad clock
+const futureFrom = new Date(Date.now() + 5 * 60000).toISOString();
+
 const rows = db.prepare(`
   SELECT d.device_id, d.hostname, d.ip, d.last_seen,
          (SELECT COUNT(*) FROM reads r WHERE r.device_id = d.device_id) AS total,
@@ -43,7 +47,7 @@ const rows = db.prepare(`
          (SELECT MAX(at) FROM reads r WHERE r.device_id = d.device_id) AS newest,
          (SELECT COUNT(*) FROM reads r WHERE r.device_id = d.device_id AND r.at > ?) AS future
   FROM devices d ORDER BY inrange DESC, total DESC
-`).all(from, to, new Date().toISOString());
+`).all(from, to, futureFrom);
 
 const pad = (s, n) => String(s === null || s === undefined ? '-' : s).padEnd(n).slice(0, n);
 // last_seen comes from the center's own clock when a heartbeat arrives, while
