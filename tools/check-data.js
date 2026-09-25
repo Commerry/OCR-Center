@@ -40,9 +40,10 @@ const rows = db.prepare(`
   SELECT d.device_id, d.hostname, d.ip, d.last_seen,
          (SELECT COUNT(*) FROM reads r WHERE r.device_id = d.device_id) AS total,
          (SELECT COUNT(*) FROM reads r WHERE r.device_id = d.device_id AND r.at >= ? AND r.at <= ?) AS inrange,
-         (SELECT MAX(at) FROM reads r WHERE r.device_id = d.device_id) AS newest
+         (SELECT MAX(at) FROM reads r WHERE r.device_id = d.device_id) AS newest,
+         (SELECT COUNT(*) FROM reads r WHERE r.device_id = d.device_id AND r.at > ?) AS future
   FROM devices d ORDER BY inrange DESC, total DESC
-`).all(from, to);
+`).all(from, to, new Date().toISOString());
 
 const pad = (s, n) => String(s === null || s === undefined ? '-' : s).padEnd(n).slice(0, n);
 // last_seen comes from the center's own clock when a heartbeat arrives, while
@@ -53,6 +54,7 @@ console.log(pad('อุปกรณ์', 18) + pad('IP', 16) + pad('reads', 10) 
 console.log('-'.repeat(110));
 const skewed = [];
 const silent = [];
+const ahead = [];
 for (const r of rows) {
   console.log(
     pad(r.hostname || r.device_id, 18)
@@ -64,8 +66,21 @@ for (const r of rows) {
   );
   const seenAgo = r.last_seen ? (Date.now() - Date.parse(r.last_seen)) / 60000 : Infinity;
   const readAgo = r.newest ? (Date.now() - Date.parse(r.newest)) / 60000 : Infinity;
-  if (seenAgo < 30 && readAgo > 24 * 60) skewed.push(r);
+  if (r.future > 0) ahead.push(r);
+  else if (seenAgo < 30 && readAgo > 24 * 60) skewed.push(r);
   else if (seenAgo > 30) silent.push(r);
+}
+
+// A camera running ahead stamps its reads in the future. They sit outside any
+// range that ends "now", so a report looks empty while data keeps arriving.
+if (ahead.length) {
+  console.log('');
+  console.log(`นาฬิกาเดินล้ำหน้า ${ahead.length} ตัว - ค่าที่อ่านได้ถูกบันทึกเป็นเวลาในอนาคต`);
+  console.log('รายงานที่สิ้นสุดที่ "ตอนนี้" จึงไม่เห็นข้อมูลพวกนี้ ทั้งที่กล้องส่งเข้ามาตลอด');
+  for (const r of ahead) {
+    console.log(`   ${pad(r.ip, 16)} ล้ำหน้า ${r.future} แถว ถึง ${local(r.newest)}`);
+  }
+  console.log('แก้: ตั้งเวลา+timezone ใหม่ทุกตัว (clean-my-cameras.ps1 -SetTimeOnly) แล้วลบแถวอนาคตทิ้ง');
 }
 
 if (skewed.length) {
