@@ -14,6 +14,11 @@ const imageStore = require('../imageStore');
  */
 const router = express.Router();
 
+// A device that cannot set its own clock reports the same drift every 30
+// seconds; without this the log fills with one line per heartbeat per device.
+const driftLoggedAt = new Map();
+const DRIFT_LOG_EVERY_MS = 10 * 60 * 1000;
+
 router.post('/heartbeat', (req, res) => {
   const apiKey = process.env.API_KEY || '';
   if (apiKey && req.get('X-Api-Key') !== apiKey) {
@@ -39,7 +44,15 @@ router.post('/heartbeat', (req, res) => {
     const driftSec = deviceTime
       ? Math.round((Date.parse(serverTime) - Date.parse(deviceTime)) / 1000) : null;
     if (driftSec !== null && Number.isFinite(driftSec) && Math.abs(driftSec) > 120) {
-      console.log(`heartbeat: ${payload.deviceId} นาฬิกาต่างจากเครื่องนี้ ${driftSec} วินาที - ส่งเวลาให้ตั้งใหม่`);
+      const last = driftLoggedAt.get(payload.deviceId) || 0;
+      if (Date.now() - last > DRIFT_LOG_EVERY_MS) {
+        driftLoggedAt.set(payload.deviceId, Date.now());
+        const hours = (driftSec / 3600).toFixed(1);
+        console.log(`heartbeat: ${payload.deviceId} (${device.ip || '-'}) นาฬิกาต่าง ${driftSec} วินาที (${hours} ชม.)`
+          + ' - ส่งเวลาให้ตั้งใหม่ ถ้ายังเห็นซ้ำแปลว่าอุปกรณ์ตั้งเวลาเองไม่สำเร็จ');
+      }
+    } else if (driftSec !== null && Math.abs(driftSec) <= 120) {
+      driftLoggedAt.delete(payload.deviceId);
     }
 
     return res.json({
