@@ -340,7 +340,8 @@
     <symbol id="i-folder" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></symbol>
     <symbol id="i-external" viewBox="0 0 24 24"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></symbol>
     <symbol id="i-logout" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></symbol>
-    <symbol id="i-report" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></symbol>
+    <symbol id="i-tool" viewBox="0 0 24 24"><path d="M14.7 6.3a4 4 0 0 1-5.4 5.4L4 17v3h3l5.3-5.3a4 4 0 0 1 5.4-5.4l-2.5 2.5 2.1 2.1 2.5-2.5a4 4 0 0 1-5.1-5.1z"/></symbol>
+  <symbol id="i-report" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></symbol>
     <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></symbol>
   </svg>
 
@@ -354,6 +355,9 @@
     </div>
     <div class="sum-chips" id="sumChips"></div>
     <div class="sum-chips" id="storeChips"></div>
+    <button class="btn" onclick="openMaint()" title="ดู log และล้างไฟล์ที่ไม่จำเป็น">
+      <svg class="icon"><use href="#i-tool"/></svg> ระบบ
+    </button>
     <button class="btn" onclick="openReport()" title="ออกรายงาน CSV พร้อมรูป">
       <svg class="icon"><use href="#i-report"/></svg> Report
     </button>
@@ -372,6 +376,45 @@
   </main>
 
   <!-- Report -->
+  <!-- Maintenance: read the error log, clear what piles up. Images are not
+       touched here - they have their own retention and cannot be recreated. -->
+  <div class="overlay" id="maintOverlay">
+    <div class="panel" style="max-width:860px">
+      <div class="panel-head">
+        <svg class="icon" style="width:1.2rem;height:1.2rem"><use href="#i-tool"/></svg>
+        <div>
+          <div class="panel-title">ระบบและการดูแลรักษา</div>
+          <div class="panel-sub">ดู error log และล้างไฟล์ที่ไม่จำเป็น (ไม่แตะรูปที่อุปกรณ์ส่งมา)</div>
+        </div>
+        <button class="x-btn" style="margin-left:auto" onclick="closeMaint()"><svg class="icon"><use href="#i-x"/></svg></button>
+      </div>
+
+      <div class="rep-stats" id="maintStats" style="margin-bottom:.8rem"></div>
+
+      <div class="sec-title">บันทึกการทำงาน</div>
+      <div class="rep-presets" style="margin-bottom:.5rem">
+        <span class="rep-preset" id="maintTabErr" onclick="maintLog('error')">เฉพาะ error</span>
+        <span class="rep-preset" id="maintTabOut" onclick="maintLog('output')">ทั้งหมด</span>
+        <span class="rep-preset" onclick="maintLog(null, true)">โหลดใหม่</span>
+      </div>
+      <pre id="maintLogBox" style="max-height:320px;overflow:auto;background:var(--surface-2);border:1px solid var(--line-soft);border-radius:var(--radius-sm);padding:.7rem;font-family:var(--font-mono);font-size:.68rem;line-height:1.5;white-space:pre-wrap;color:var(--text-2);user-select:text;cursor:text">กำลังโหลด...</pre>
+
+      <div class="sec-title" style="margin-top:1rem">ล้างข้อมูลที่ไม่จำเป็น</div>
+      <div id="maintHint" class="rep-hint" style="margin-bottom:.6rem">
+        ล้าง log และไฟล์ชั่วคราว, ลบประวัติที่เกินกำหนดเก็บ แล้วบีบอัดฐานข้อมูล — <b style="color:var(--text-1)">รูปที่อุปกรณ์ส่งมาจะไม่ถูกลบ</b>
+      </div>
+      <div style="display:flex;gap:.5rem;flex-wrap:wrap">
+        <button class="btn" onclick="maintClearLogs()">
+          <svg class="icon"><use href="#i-trash"/></svg> ล้าง log อย่างเดียว
+        </button>
+        <button class="btn grad" onclick="maintCleanup()">
+          <svg class="icon"><use href="#i-trash"/></svg> ล้างทุกอย่างที่ไม่ใช่รูป
+        </button>
+        <button class="btn" style="margin-left:auto" onclick="closeMaint()">ปิด</button>
+      </div>
+    </div>
+  </div>
+
   <div class="overlay" id="reportOverlay">
     <div class="panel" style="max-width:720px">
       <div class="panel-head">
@@ -627,6 +670,81 @@
         if (openDeviceId) renderDetail();
       } catch (e) {
         document.getElementById('refreshNote').textContent = 'refresh failed';
+      }
+    }
+
+    /* ===== Maintenance ===== */
+    let maintKind = 'error';
+
+    function openMaint() {
+      document.getElementById('maintOverlay').classList.add('show');
+      maintStatus();
+      maintLog(maintKind);
+    }
+    function closeMaint() {
+      document.getElementById('maintOverlay').classList.remove('show');
+    }
+
+    async function maintStatus() {
+      try {
+        const d = await fetch('/api/maintenance/status').then(r => r.json());
+        if (!d.success) return;
+        const mb = (n) => (n >= 1024 ? (n / 1024).toFixed(1) + ' GB' : n + ' MB');
+        document.getElementById('maintStats').innerHTML =
+          '<div class="rep-stat"><b>' + mb(d.logs.totalMb) + '</b><span>log</span></div>' +
+          '<div class="rep-stat"><b>' + mb(d.tempMb) + '</b><span>ไฟล์ชั่วคราว</span></div>' +
+          '<div class="rep-stat"><b>' + mb(d.database.sizeMb + d.database.walMb) + '</b><span>ฐานข้อมูล</span></div>' +
+          '<div class="rep-stat"><b style="color:var(--ok)">' + mb(d.images.sizeMb) + '</b><span>รูป (ไม่ลบ)</span></div>';
+        document.getElementById('maintHint').innerHTML =
+          'เก็บประวัติการอ่าน ' + d.retention.readsKeepDays + ' วัน &middot; สุขภาพเครื่อง ' +
+          d.retention.healthKeepDays + ' วัน &middot; รูป ' + d.retention.imagesKeepDays + ' วัน' +
+          ' &middot; ในฐานข้อมูลมี ' + d.database.reads.toLocaleString() + ' แถว' +
+          (d.disk.freePercent === null ? '' : ' &middot; ดิสก์เหลือ ' + d.disk.freePercent + '%') +
+          '<br>ล้าง log และไฟล์ชั่วคราว, ลบประวัติที่เกินกำหนด แล้วบีบอัดฐานข้อมูล — <b style="color:var(--text-1)">รูปที่อุปกรณ์ส่งมาจะไม่ถูกลบ</b>';
+      } catch (e) { /* dialog still usable */ }
+    }
+
+    async function maintLog(kind, reload) {
+      if (kind) maintKind = kind;
+      const box = document.getElementById('maintLogBox');
+      document.getElementById('maintTabErr').style.opacity = maintKind === 'error' ? '1' : '.5';
+      document.getElementById('maintTabOut').style.opacity = maintKind === 'output' ? '1' : '.5';
+      if (!reload) box.textContent = 'กำลังโหลด...';
+      try {
+        const d = await fetch('/api/maintenance/log?kind=' + maintKind + '&lines=300').then(r => r.json());
+        if (!d.success) { box.textContent = d.error || 'อ่าน log ไม่ได้'; return; }
+        box.textContent = (d.text || '').trim() || 'ไม่มีข้อความใน log (ว่างเปล่า = ไม่มี error)';
+        box.scrollTop = box.scrollHeight;
+      } catch (e) {
+        box.textContent = 'อ่าน log ไม่ได้: ' + e.message;
+      }
+    }
+
+    async function maintClearLogs() {
+      if (!confirm('ล้างไฟล์ log ทั้งหมด? (ข้อมูลการอ่านและรูปไม่ถูกแตะ)')) return;
+      const d = await fetch('/api/maintenance/clear-logs', { method: 'POST' }).then(r => r.json());
+      alert(d.success ? ('ล้าง log ' + d.files + ' ไฟล์ คืนพื้นที่ ' + d.freedMb + ' MB') : ('ไม่สำเร็จ: ' + d.error));
+      maintStatus();
+      maintLog(maintKind, true);
+    }
+
+    async function maintCleanup() {
+      if (!confirm('ล้าง log, ไฟล์ชั่วคราว, ประวัติที่เกินกำหนดเก็บ แล้วบีบอัดฐานข้อมูล\n\nรูปที่อุปกรณ์ส่งมาจะไม่ถูกลบ\n\nดำเนินการต่อ?')) return;
+      const btns = document.querySelectorAll('#maintOverlay button');
+      btns.forEach(b => { b.disabled = true; });
+      try {
+        const d = await fetch('/api/maintenance/cleanup', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}),
+        }).then(r => r.json());
+        if (!d.success) { alert('ไม่สำเร็จ: ' + d.error); return; }
+        alert('เสร็จแล้ว - คืนพื้นที่รวม ' + d.totalFreedMb + ' MB\n' +
+              'log ' + d.logs.freedMb + ' MB, ไฟล์ชั่วคราว ' + d.temp.freedMb + ' MB, ฐานข้อมูล ' + d.dbFreedMb + ' MB\n' +
+              'ลบประวัติการอ่าน ' + d.reads + ' แถว, สุขภาพเครื่อง ' + d.health + ' แถว');
+      } finally {
+        btns.forEach(b => { b.disabled = false; });
+        maintStatus();
+        maintLog(maintKind, true);
+        refreshStorage();
       }
     }
 

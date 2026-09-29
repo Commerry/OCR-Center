@@ -187,6 +187,20 @@ curl -s http://localhost:8090/api/health
 ```
 ตอบ `{"ok":true,"version":"1.2.0","node":"...","uptimeSec":...}` — ไม่ต้อง login เอาไว้ยืนยันว่าอัปเดตขึ้นจริงแล้ว
 
+## ปุ่ม "ระบบ" - ดู log และล้างไฟล์ที่ไม่จำเป็น
+
+บนหัวเว็บมีปุ่ม **ระบบ** เปิดหน้าต่างที่:
+
+- แสดงขนาดของ log, ไฟล์ชั่วคราว, ฐานข้อมูล และรูป (รูปแสดงเป็นสีเขียวเพราะไม่ถูกลบ)
+- อ่าน **error log** ย้อนหลัง 300 บรรทัด (สลับดู log ทั้งหมดได้) อ่านจากท้ายไฟล์ ไฟล์ใหญ่แค่ไหนก็เปิดเร็ว
+- ปุ่ม **ล้าง log อย่างเดียว** — ตัดไฟล์ log ให้ว่าง (ใช้ truncate ไม่ใช่ลบ เพราะ pm2 ถือไฟล์อยู่ ลบแล้วพื้นที่ไม่คืน) แล้วสั่ง `pm2 reloadLogs`
+- ปุ่ม **ล้างทุกอย่างที่ไม่ใช่รูป** — ล้าง log + ไฟล์ชั่วคราวของรายงาน + ลบประวัติที่เกินกำหนดเก็บ (`READS_KEEP_DAYS`, `HEALTH_KEEP_DAYS`) + `VACUUM` บีบอัดฐานข้อมูล
+
+**รูปที่อุปกรณ์ส่งมาไม่ถูกแตะทุกกรณี** — เป็นสิ่งเดียวที่สร้างใหม่ไม่ได้ และมีกติกาเก็บของตัวเองอยู่แล้ว (`IMAGES_KEEP_DAYS`, `IMAGES_MAX_MB`)
+
+API: `GET /api/maintenance/status`, `GET /api/maintenance/log?kind=error|output&lines=300`,
+`POST /api/maintenance/clear-logs`, `POST /api/maintenance/cleanup`
+
 ## Dashboard API
 
 - `GET /api/summary` — จำนวน online/offline/alerts

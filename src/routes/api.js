@@ -3,6 +3,7 @@ const fs = require('fs');
 const { statements, reorderGroups, deleteDevice } = require('../db');
 const report = require('../report');
 const { buildInWorker } = require('../reportWorker');
+const maintenance = require('../maintenance');
 const imageStore = require('../imageStore');
 
 // Dashboard-facing REST API
@@ -215,6 +216,52 @@ router.post('/reports/export', (req, res) => sendReport(req, res, req.body || {}
  * Navigating to this URL lets the browser stream the file straight to disk.
  */
 router.get('/reports/export', (req, res) => sendReport(req, res, req.query || {}));
+
+// ---- Maintenance ----
+// Reading and clearing what piles up; saved images are out of scope here.
+router.get('/maintenance/status', (req, res) => {
+  try {
+    return res.json({ success: true, ...maintenance.status() });
+  } catch (error) {
+    console.error('maintenance status failed:', error.message);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.get('/maintenance/log', (req, res) => {
+  try {
+    const lines = Math.min(2000, parseInt(req.query.lines, 10) || 300);
+    const kind = req.query.kind === 'output' ? 'output' : 'error';
+    return res.json({ success: true, kind, lines, ...maintenance.read({ kind, lines }) });
+  } catch (error) {
+    console.error('maintenance log failed:', error.message);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.post('/maintenance/clear-logs', (req, res) => {
+  try {
+    const result = maintenance.clearLogs();
+    console.log(`maintenance: ล้าง log ${result.files} ไฟล์ คืนพื้นที่ ${result.freedMb} MB`);
+    return res.json({ success: true, ...result });
+  } catch (error) {
+    console.error('clear logs failed:', error.message);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.post('/maintenance/cleanup', (req, res) => {
+  try {
+    const includeImages = (req.body || {}).includeImages === true;
+    const result = maintenance.cleanup({ includeImages });
+    console.log(`maintenance: เคลียร์ระบบ - reads ${result.reads}, health ${result.health}, `
+      + `log ${result.logs.freedMb} MB, temp ${result.temp.freedMb} MB, db ${result.dbFreedMb} MB`);
+    return res.json({ success: true, ...result });
+  } catch (error) {
+    console.error('cleanup failed:', error.message);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
 
 router.get('/reports/storage', (req, res) => {
   res.json({
