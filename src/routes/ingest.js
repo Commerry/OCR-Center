@@ -1,5 +1,6 @@
 const express = require('express');
 const { ingestHeartbeat, enforceImageCap } = require('../db');
+const timeGuard = require('../timeGuard');
 const imageStore = require('../imageStore');
 
 /*
@@ -16,6 +17,7 @@ const router = express.Router();
 
 // A device that cannot set its own clock reports the same drift every 30
 // seconds; without this the log fills with one line per heartbeat per device.
+let lastClockWarnAt = 0;
 const driftLoggedAt = new Map();
 const DRIFT_LOG_EVERY_MS = 10 * 60 * 1000;
 
@@ -39,6 +41,10 @@ router.post('/heartbeat', (req, res) => {
     // cut it comes back weeks in the past and stamps every read with that
     // time - the reads land on the wrong day here and reports look empty. The
     // device corrects itself from this on its first heartbeat after booting.
+    // Never hand out a time this machine cannot vouch for. A center that came
+    // back from a reboot with a stale clock would otherwise reset every camera
+    // to that wrong date - far worse than leaving the devices alone.
+    const clock = timeGuard.check();
     const serverTime = new Date().toISOString();
     const deviceTime = payload.sentAt;
     const driftSec = deviceTime
@@ -53,6 +59,18 @@ router.post('/heartbeat', (req, res) => {
       }
     } else if (driftSec !== null && Math.abs(driftSec) <= 120) {
       driftLoggedAt.delete(payload.deviceId);
+    }
+
+    if (!clock.trusted) {
+      const behindHours = (clock.behindMs / 3600000).toFixed(1);
+      if (Date.now() - lastClockWarnAt > 10 * 60 * 1000) {
+        lastClockWarnAt = Date.now();
+        console.error(`นาฬิกาของเครื่องนี้ย้อนหลังไป ${behindHours} ชั่วโมง `
+          + `(ตอนนี้ ${serverTime}, เคยเห็นล่าสุด ${new Date(clock.marker).toISOString()}) `
+          + '- หยุดส่งเวลาให้กล้องจนกว่าจะแก้ ด้วย: sudo timedatectl set-time "YYYY-MM-DD HH:MM:SS"');
+      }
+      // no serverTime in the answer: the devices keep the time they have
+      return res.json({ ok: true, clockUntrusted: true, behindHours: Number(behindHours) });
     }
 
     return res.json({

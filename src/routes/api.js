@@ -218,6 +218,20 @@ router.post('/reports/export', (req, res) => sendReport(req, res, req.body || {}
 router.get('/reports/export', (req, res) => sendReport(req, res, req.query || {}));
 
 // ---- Maintenance ----
+// After the clock has been set by hand, this tells the center the new time is
+// the truth, so it starts handing it out to the cameras again.
+router.post('/maintenance/accept-clock', (req, res) => {
+  try {
+    // eslint-disable-next-line global-require
+    const timeGuard = require('../timeGuard');
+    const marker = timeGuard.accept();
+    console.log(`ยอมรับนาฬิกาใหม่: ${new Date(marker).toISOString()} - กลับมาส่งเวลาให้กล้องแล้ว`);
+    return res.json({ success: true, acceptedAt: new Date(marker).toISOString() });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // Reading and clearing what piles up; saved images are out of scope here.
 router.get('/maintenance/status', (req, res) => {
   try {

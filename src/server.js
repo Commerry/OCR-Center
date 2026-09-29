@@ -32,8 +32,12 @@ app.get('/api/settings', (req, res) => res.json({
 // is really running without logging in.
 const startedAt = new Date();
 app.get('/api/health', (req, res) => {
+  // eslint-disable-next-line global-require
+  const clock = require('./timeGuard').check();
   res.json({
     ok: true,
+    clockTrusted: clock.trusted,
+    clockBehindHours: clock.trusted ? 0 : +(clock.behindMs / 3600000).toFixed(1),
     version: require('../package.json').version,
     node: process.version,
     startedAt: startedAt.toISOString(),
