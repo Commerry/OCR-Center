@@ -54,7 +54,8 @@ router.post('/heartbeat', (req, res) => {
       if (Date.now() - last > DRIFT_LOG_EVERY_MS) {
         driftLoggedAt.set(payload.deviceId, Date.now());
         const hours = (driftSec / 3600).toFixed(1);
-        console.log(`heartbeat: ${payload.deviceId} (${device.ip || '-'}) นาฬิกาต่าง ${driftSec} วินาที (${hours} ชม.)`
+        const ip = (payload.device && payload.device.ip) || '-';
+        console.log(`heartbeat: ${payload.deviceId} (${ip}) นาฬิกาต่าง ${driftSec} วินาที (${hours} ชม.)`
           + ' - ส่งเวลาให้ตั้งใหม่ ถ้ายังเห็นซ้ำแปลว่าอุปกรณ์ตั้งเวลาเองไม่สำเร็จ');
       }
     } else if (driftSec !== null && Math.abs(driftSec) <= 120) {
