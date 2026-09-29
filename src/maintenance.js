@@ -4,6 +4,7 @@ const path = require('path');
 const { execFile } = require('child_process');
 const { db, prune } = require('./db');
 const imageStore = require('./imageStore');
+const imageThumb = require('./imageThumb');
 
 /*
  * Housekeeping the dashboard can drive: read the error log, and clear the
@@ -100,6 +101,9 @@ const status = () => {
       imagesKeepDays: parseInt(process.env.IMAGES_KEEP_DAYS, 10) || 30,
     },
     disk: { freePercent: imageStore.diskFreePercent() },
+    // which converter makes the thumbnails that go inside a report: without
+    // one the workbook carries the original webp, which only Excel 365 draws
+    report: { thumbTool: imageThumb.detect().label, thumbKind: imageThumb.detect().kind },
   };
 };
 

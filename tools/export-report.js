@@ -6,10 +6,11 @@
  * where a slow export actually spends its time - it prints the row count, the
  * time taken and the peak memory it used.
  *
- *   node tools/export-report.js --days 7 --out ~/report.zip
+ *   node tools/export-report.js --days 7 --out ~/report.xlsx
  *   node tools/export-report.js --from 2026-09-01 --to 2026-09-23 --no-images
  *   node tools/export-report.js --device d8:3a:dd:42:a4:ef --days 1
  *   node tools/export-report.js --count-only --days 30
+ *   node tools/export-report.js --days 7 --zip      (csv + every image as a file)
  */
 const fs = require('fs');
 const path = require('path');
@@ -56,6 +57,7 @@ const params = {
   minConfidence: Number(flag('min-confidence', 0)) || 0,
   includeImages: !has('no-images'),
   scopeLabel: wanted ? `อุปกรณ์ ${wanted}` : `ทุกอุปกรณ์ (${deviceIds.length})`,
+  format: has('zip') ? 'zip' : 'xlsx',
 };
 
 const rows = db.prepare(`
@@ -69,6 +71,11 @@ const rows = db.prepare(`
 console.log(`ช่วงเวลา : ${from} -> ${to}`);
 console.log(`อุปกรณ์  : ${params.scopeLabel}`);
 console.log(`ข้อมูล   : ${rows.reads} แถว, มีรูป ${rows.images || 0} ใบ, แนบรูป: ${params.includeImages ? 'ใช่' : 'ไม่'}`);
+if (params.format === 'xlsx' && params.includeImages) {
+  // eslint-disable-next-line global-require
+  const tool = require('../src/imageThumb').detect();
+  console.log(`ย่อรูป   : ${tool.kind === 'none' ? tool.label + ' (จะแนบ webp ต้นฉบับ)' : tool.label}`);
+}
 
 if (has('count-only')) process.exit(0);
 

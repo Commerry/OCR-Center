@@ -358,7 +358,7 @@
     <button class="btn" onclick="openMaint()" title="ดู log และล้างไฟล์ที่ไม่จำเป็น">
       <svg class="icon"><use href="#i-tool"/></svg> ระบบ
     </button>
-    <button class="btn" onclick="openReport()" title="ออกรายงาน CSV พร้อมรูป">
+    <button class="btn" onclick="openReport()" title="ออกรายงาน Excel พร้อมรูปในไฟล์เดียว">
       <svg class="icon"><use href="#i-report"/></svg> Report
     </button>
     <button class="btn grad" onclick="createGroup()">
@@ -421,7 +421,7 @@
         <svg class="icon" style="width:1.2rem;height:1.2rem"><use href="#i-report"/></svg>
         <div>
           <div class="panel-title">ออกรายงานการอ่านตัวเลข</div>
-          <div class="panel-sub">ไฟล์ ZIP: detail.csv, summary.csv และรูปที่อุปกรณ์ส่งมา</div>
+          <div class="panel-sub">ไฟล์ Excel ไฟล์เดียว: ชีท "สรุป" และชีท "รายละเอียด" พร้อมรูปในแถว</div>
         </div>
         <button class="x-btn" style="margin-left:auto" onclick="closeReport()"><svg class="icon"><use href="#i-x"/></svg></button>
       </div>
@@ -461,7 +461,7 @@
 
       <div class="rep-field" style="margin-top:.7rem">
         <label style="display:flex;align-items:center;gap:.5rem;text-transform:none;letter-spacing:0;font-size:.78rem;color:var(--text-2)">
-          <input type="checkbox" id="repImages" checked> แนบรูปที่อุปกรณ์ส่งมาไปในไฟล์ ZIP
+          <input type="checkbox" id="repImages" checked> แนบรูปลงในชีทรายละเอียด (ไฟล์จะใหญ่ขึ้น)
         </label>
       </div>
 
@@ -700,6 +700,10 @@
           d.retention.healthKeepDays + ' วัน &middot; รูป ' + d.retention.imagesKeepDays + ' วัน' +
           ' &middot; ในฐานข้อมูลมี ' + d.database.reads.toLocaleString() + ' แถว' +
           (d.disk.freePercent === null ? '' : ' &middot; ดิสก์เหลือ ' + d.disk.freePercent + '%') +
+          (!d.report ? '' : '<br>รูปในรายงาน: ' + (d.report.thumbKind === 'none'
+            ? '<b style="color:var(--warn,#f59e0b)">' + d.report.thumbTool +
+              ' - จะแนบไฟล์ webp ต้นฉบับ ซึ่ง Excel รุ่นเก่าจะไม่แสดงรูป (ติดตั้ง python3-pil หรือ ffmpeg เพื่อแก้)</b>'
+            : 'ย่อรูปด้วย ' + d.report.thumbTool)) +
           '<br>ล้าง log และไฟล์ชั่วคราว, ลบประวัติที่เกินกำหนด แล้วบีบอัดฐานข้อมูล — <b style="color:var(--text-1)">รูปที่อุปกรณ์ส่งมาจะไม่ถูกลบ</b>';
       } catch (e) { /* dialog still usable */ }
     }

@@ -2,17 +2,20 @@ const fs = require('fs');
 const zlib = require('zlib');
 
 /*
- * Minimal ZIP writer (store method, no compression).
+ * Minimal ZIP writer. Written by hand to keep the center free of an extra npm
+ * dependency on machines that sit behind the factory proxy.
  *
- * Written by hand on purpose: the report only bundles CSV text plus webp
- * images that are already compressed, so there is nothing to gain from
- * deflate - and this keeps the center free of an extra npm dependency on
- * machines that sit behind the factory proxy.
+ * Two methods: store for things already compressed (webp, jpeg, png), deflate
+ * for the XML inside an xlsx, where a sheet of a hundred thousand rows is
+ * mostly repeated tag names and shrinks by about 10x.
  *
  * Entries are streamed to a file so a large report never sits in memory.
  * 32-bit sizes only: refuses to build an archive over 4 GB.
  */
 const MAX_TOTAL = 4 * 1024 * 1024 * 1024 - 1;
+// above this an entry is stored instead of deflated: deflateRawSync needs the
+// whole thing in memory, and no sheet that big belongs in a spreadsheet anyway
+const DEFLATE_MAX = 192 * 1024 * 1024;
 
 const CRC_TABLE = (() => {
   const table = new Int32Array(256);
@@ -65,13 +68,25 @@ class ZipWriter {
     }
   }
 
-  /** Add one file. `data` is a Buffer, or pass `filePath` to read from disk. */
-  add(name, data, filePath) {
+  /**
+   * Add one file. `data` is a Buffer, or pass `filePath` to read from disk.
+   * `compress` deflates the bytes - worth it for text, pointless for images.
+   */
+  add(name, data, filePath, { compress = false } = {}) {
     const nameBuf = Buffer.from(name, 'utf8');
     const { time, day } = dosTime(new Date());
     let size;
     let crc;
     let payload = data;
+    let deflated = null;
+
+    if (compress && filePath) {
+      const bytes = fs.statSync(filePath).size;
+      if (bytes <= DEFLATE_MAX) {
+        payload = fs.readFileSync(filePath);
+        filePath = null; // deflated from the buffer below
+      }
+    }
 
     if (filePath) {
       size = fs.statSync(filePath).size;
@@ -96,19 +111,27 @@ class ZipWriter {
         fs.closeSync(src);
       }
     } else {
-      size = data.length;
-      crc = crc32(data);
+      size = payload.length;
+      crc = crc32(payload);
+      if (compress) {
+        const packed = zlib.deflateRawSync(payload, { level: 6 });
+        // a tiny or already-compressed entry can come out bigger: keep the original
+        if (packed.length < size) deflated = packed;
+      }
     }
+
+    const method = deflated ? 8 : 0;
+    const csize = deflated ? deflated.length : size;
 
     const local = Buffer.alloc(30);
     local.writeUInt32LE(0x04034b50, 0);
     local.writeUInt16LE(20, 4);        // version needed
     local.writeUInt16LE(0x0800, 6);    // UTF-8 file names
-    local.writeUInt16LE(0, 8);         // method: store
+    local.writeUInt16LE(method, 8);    // 0 store, 8 deflate
     local.writeUInt16LE(time, 10);
     local.writeUInt16LE(day, 12);
     local.writeUInt32LE(crc, 14);
-    local.writeUInt32LE(size, 18);
+    local.writeUInt32LE(csize, 18);
     local.writeUInt32LE(size, 22);
     local.writeUInt16LE(nameBuf.length, 26);
     local.writeUInt16LE(0, 28);
@@ -127,14 +150,14 @@ class ZipWriter {
       }
       fs.closeSync(src);
     } else {
-      this._write(payload);
+      this._write(deflated || payload);
     }
 
-    this.entries.push({ nameBuf, crc, size, headerOffset, time, day });
+    this.entries.push({ nameBuf, crc, size, csize, method, headerOffset, time, day });
   }
 
-  addText(name, text) {
-    this.add(name, Buffer.from(text, 'utf8'));
+  addText(name, text, options) {
+    this.add(name, Buffer.from(text, 'utf8'), null, options);
   }
 
   close() {
@@ -145,11 +168,11 @@ class ZipWriter {
       central.writeUInt16LE(20, 4);      // version made by
       central.writeUInt16LE(20, 6);      // version needed
       central.writeUInt16LE(0x0800, 8);  // UTF-8
-      central.writeUInt16LE(0, 10);      // store
+      central.writeUInt16LE(e.method, 10);
       central.writeUInt16LE(e.time, 12);
       central.writeUInt16LE(e.day, 14);
       central.writeUInt32LE(e.crc, 16);
-      central.writeUInt32LE(e.size, 20);
+      central.writeUInt32LE(e.csize, 20);
       central.writeUInt32LE(e.size, 24);
       central.writeUInt16LE(e.nameBuf.length, 28);
       central.writeUInt16LE(0, 30);      // extra

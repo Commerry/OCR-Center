@@ -4,15 +4,23 @@ const path = require('path');
 const { db } = require('./db');
 const imageStore = require('./imageStore');
 const { ZipWriter } = require('./zip');
+const { XlsxWriter, STYLE, colName } = require('./xlsx');
+const { imageInfoOf } = require('./imageInfo');
+const imageThumb = require('./imageThumb');
 const { localTime } = require('./localTime');
 
 /*
  * Report builder.
  *
- * A report covers one time range and a set of devices, and comes out as a ZIP:
- *   detail.csv   - one row per read, in time order
- *   summary.csv  - accuracy per device, per value read, and per OCR model
- *   images/...   - the picture the device pushed for that read (when there is one)
+ * A report covers one time range and a set of devices, and comes out as one
+ * xlsx workbook with two sheets:
+ *   สรุป         - accuracy per device, per value read, and per OCR model
+ *   รายละเอียด    - one row per read, in time order, with the frame that read
+ *                  came from drawn in the row - a filename pointing into a
+ *                  folder is no use to someone checking a number by eye
+ *
+ * `format: 'zip'` still builds the old layout (detail.csv, summary.csv and
+ * every image as a file), which is the way to get the frames themselves out.
  *
  * Reads that came back 888 (no number found) or 999 (bad format) are counted as
  * failed reads; everything else counts as a successful read. Accuracy is
@@ -244,17 +252,26 @@ const detailCsv = (rows, minConfidence) => toCsv([
   ...rows.map((r, i) => detailRow(r, i + 1, minConfidence)),
 ]);
 
-const summaryCsv = ({ devices, values, models, totals }, meta) => {
+/*
+ * The summary, as rows with a kind on each one.
+ *
+ * The same rows feed the sheet and the CSV: the sheet turns the kind into a
+ * style, the CSV throws it away. Written once so the two can never drift.
+ */
+const summaryBlocks = ({ devices, values, models, totals }, meta, notes = []) => {
   const out = [];
-  out.push(['รายงานสรุปความแม่นยำการอ่านตัวเลข']);
-  out.push(['ช่วงเวลา', meta.fromLabel + ' ถึง ' + meta.toLabel]);
-  out.push(['ออกรายงานเมื่อ', localTime(new Date().toISOString())]);
-  out.push(['ขอบเขต', meta.scopeLabel]);
-  out.push(['เกณฑ์ความมั่นใจขั้นต่ำ (%)', meta.minConfidence > 0 ? meta.minConfidence : 'ไม่กำหนด']);
-  out.push([]);
+  const push = (kind, cells) => out.push({ kind, cells: cells || [] });
 
-  out.push(['== สรุปรายอุปกรณ์ ==']);
-  out.push([
+  push('title', ['รายงานสรุปความแม่นยำการอ่านตัวเลข']);
+  push('meta', ['ช่วงเวลา', meta.fromLabel + ' ถึง ' + meta.toLabel]);
+  push('meta', ['ออกรายงานเมื่อ', localTime(new Date().toISOString())]);
+  push('meta', ['ขอบเขต', meta.scopeLabel]);
+  push('meta', ['เกณฑ์ความมั่นใจขั้นต่ำ (%)', meta.minConfidence > 0 ? meta.minConfidence : 'ไม่กำหนด']);
+  for (const note of notes) push('meta', note);
+  push('blank');
+
+  push('section', ['== สรุปรายอุปกรณ์ ==']);
+  push('head', [
     'กลุ่ม', 'อุปกรณ์', 'IP', 'โมเดลที่ใช้', 'อ่านทั้งหมด (ครั้ง)', 'อ่านสำเร็จ', 'อ่านไม่เจอ (888)',
     'รูปแบบผิด (999)', 'อ่านผิดรวม', 'อัตราความถูกต้อง (%)', 'ความมั่นใจเฉลี่ย (%)',
     'ความมั่นใจต่ำกว่าเกณฑ์ (ครั้ง)', 'มีรูปแนบ (ครั้ง)',
@@ -262,7 +279,7 @@ const summaryCsv = ({ devices, values, models, totals }, meta) => {
   ]);
   for (const d of devices) {
     const failed = d.notFound + d.invalid;
-    out.push([
+    push('row', [
       d.group, d.device, d.ip, [...d.models].join(' / '),
       d.total, d.ok, d.notFound, d.invalid, failed,
       pct(d.ok, d.total), d.confN ? Math.round((d.confSum / d.confN) * 10000) / 100 : '',
@@ -271,38 +288,38 @@ const summaryCsv = ({ devices, values, models, totals }, meta) => {
     ]);
   }
   const failedAll = totals.notFound + totals.invalid;
-  out.push([
+  push('total', [
     'รวมทุกอุปกรณ์', '', '', '', totals.total, totals.ok, totals.notFound, totals.invalid, failedAll,
     pct(totals.ok, totals.total),
     totals.confN ? Math.round((totals.confSum / totals.confN) * 10000) / 100 : '',
     totals.lowConf, totals.withImage,
     totals.weightN ? num(totals.weightSum / totals.weightN) : '', '', '', totals.weightN,
   ]);
-  out.push([]);
+  push('blank');
 
-  out.push(['== สรุปรายโมเดล ==']);
-  out.push([
+  push('section', ['== สรุปรายโมเดล ==']);
+  push('head', [
     'โมเดลที่ใช้', 'จำนวนกล้องที่ใช้', 'อ่านทั้งหมด (ครั้ง)', 'อ่านสำเร็จ', 'อ่านไม่เจอ (888)',
     'รูปแบบผิด (999)', 'อ่านผิดรวม', 'อัตราความถูกต้อง (%)', 'ความมั่นใจเฉลี่ย (%)',
     'ความมั่นใจต่ำกว่าเกณฑ์ (ครั้ง)',
   ]);
   for (const m of models || []) {
-    out.push([
+    push('row', [
       m.model, m.devices.size, m.total, m.ok, m.notFound, m.invalid, m.notFound + m.invalid,
       pct(m.ok, m.total), m.confN ? Math.round((m.confSum / m.confN) * 10000) / 100 : '',
       m.lowConf,
     ]);
   }
-  out.push([]);
+  push('blank');
 
-  out.push(['== สรุปรายเลขที่อ่านได้ ==']);
-  out.push([
+  push('section', ['== สรุปรายเลขที่อ่านได้ ==']);
+  push('head', [
     'กลุ่ม', 'อุปกรณ์', 'เลขที่อ่านได้', 'สถานะ', 'จำนวนครั้ง', 'สัดส่วนของอุปกรณ์ (%)',
     'ความมั่นใจเฉลี่ย (%)', 'ความมั่นใจต่ำสุด (%)', 'น้ำหนักเฉลี่ย', 'มีรูปแนบ (ครั้ง)',
   ]);
   const deviceTotal = new Map(devices.map((d) => [d.device, d.total]));
   for (const v of values) {
-    out.push([
+    push('row', [
       v.group, v.device, v.value, statusOf(v.value), v.count,
       pct(v.count, deviceTotal.get(v.device) || 0),
       v.confN ? Math.round((v.confSum / v.confN) * 10000) / 100 : '',
@@ -311,14 +328,12 @@ const summaryCsv = ({ devices, values, models, totals }, meta) => {
       v.withImage,
     ]);
   }
-  return toCsv(out);
+  return out;
 };
 
-/**
- * Numbers for the preview panel, without building any file.
- * Counted in SQL: the dialog calls this on every change, and loading every
- * row into node for a month of reads would stall the whole server.
- */
+const summaryCsv = (result, meta, notes) =>
+  toCsv(summaryBlocks(result, meta, notes).map((b) => b.cells));
+
 const preview = ({ from, to, deviceIds }) => {
   const empty = { reads: 0, devices: 0, images: 0, ok: 0, failed: 0, accuracy: 0, models: [], withWeight: 0 };
   if (!deviceIds || deviceIds.length === 0) return empty;
@@ -366,17 +381,60 @@ const preview = ({ from, to, deviceIds }) => {
  * string, which made a month-sized export run the server out of memory and
  * take the whole site down with it.
  */
+
+/* ------------------------------------------------------------------ build -- */
+
 const WRITE_CHUNK = 256 * 1024;
 
-const build = ({ from, to, deviceIds, minConfidence, includeImages, scopeLabel, onProgress }) => {
-  const meta = {
-    fromLabel: localTime(from),
-    toLabel: localTime(to),
-    scopeLabel: scopeLabel || 'ทุกอุปกรณ์',
-    minConfidence: minConfidence || 0,
-  };
+// how many pictures may go inside one workbook. Every picture is bytes Excel
+// has to hold open, and a month of reads across the fleet is far more frames
+// than anyone looks at; past this the cell keeps the filename instead.
+const maxImagesInFile = () => Math.max(0, parseInt(process.env.REPORT_MAX_IMAGES_IN_FILE, 10) || 3000);
+// and a ceiling on their total size, which is what actually decides whether
+// Excel opens the file in two seconds or two minutes. It matters most on a
+// center with no converter, where the frames go in at full size.
+const maxImageBytes = () => Math.max(1, parseInt(process.env.REPORT_MAX_IMAGE_MB, 10) || 80) * 1048576;
+const imageHeightPx = () => Math.max(40, parseInt(process.env.REPORT_IMAGE_HEIGHT_PX, 10) || 120);
 
-  const stamp = localTime(new Date().toISOString()).replace(/[-: ]/g, '').slice(0, 14);
+// same columns as the CSV, except the last one holds the picture itself
+const SHEET_COLUMNS = [
+  { px: 55 }, { px: 145 }, { px: 95 }, { px: 135 }, { px: 110 }, { px: 95 },
+  { px: 95 }, { px: 110 }, { px: 95 }, { px: 85 }, { px: 140 }, { px: 110 },
+  { px: 80 }, { px: 240 },
+];
+const SHEET_HEADER = DETAIL_HEADER.slice(0, -1).concat(['รูป']);
+const IMAGE_COLUMN = SHEET_HEADER.length - 1;
+
+const SUMMARY_COLUMNS = [
+  { px: 160 }, { px: 150 }, { px: 110 }, { px: 150 }, { px: 100 }, { px: 85 }, { px: 100 },
+  { px: 95 }, { px: 90 }, { px: 110 }, { px: 110 }, { px: 120 }, { px: 100 },
+  { px: 90 }, { px: 90 }, { px: 90 }, { px: 95 },
+];
+
+const BLOCK_STYLE = {
+  title: STYLE.title,
+  meta: STYLE.normal,
+  section: STYLE.section,
+  head: STYLE.header,
+  row: STYLE.normal,
+  total: STYLE.bold,
+  blank: STYLE.normal,
+};
+
+/** The image files in range, oldest first, at most `limit` of them. */
+const imageFilesInRange = ({ from, to, deviceIds }, limit) => {
+  if (!deviceIds || deviceIds.length === 0 || limit <= 0) return [];
+  const marks = deviceIds.map(() => '?').join(',');
+  return db.prepare(`
+    SELECT i.file
+    FROM reads r
+    JOIN read_images i ON i.device_id = r.device_id AND i.camera = r.camera AND i.read_at = r.at
+    WHERE r.device_id IN (${marks}) AND r.at >= ? AND r.at <= ?
+    ORDER BY r.at ASC
+    LIMIT ?`).all(...deviceIds, from, to, limit).map((row) => row.file);
+};
+
+const tempBase = (stamp) => {
   // data/tmp by default: /tmp is RAM-backed (tmpfs) on many Linux installs, and
   // a report with images can be gigabytes
   const tmpDir = process.env.REPORT_TMP_DIR || path.join(__dirname, '..', 'data', 'tmp');
@@ -385,10 +443,183 @@ const build = ({ from, to, deviceIds, minConfidence, includeImages, scopeLabel, 
   } catch (error) {
     // fall back to the system temp folder if data/ is not writable
   }
-  const base = fs.existsSync(tmpDir) ? tmpDir : os.tmpdir();
-  const tmpBase = path.join(base, `ocr-report-${stamp}-${process.pid}`);
-  const detailFile = `${tmpBase}-detail.csv`;
-  const zipFile = `${tmpBase}.zip`;
+  const dir = fs.existsSync(tmpDir) ? tmpDir : os.tmpdir();
+  return { dir, base: path.join(dir, `ocr-report-${stamp}-${process.pid}`) };
+};
+
+const buildMeta = ({ from, to, scopeLabel, minConfidence }) => ({
+  fromLabel: localTime(from),
+  toLabel: localTime(to),
+  scopeLabel: scopeLabel || 'ทุกอุปกรณ์',
+  minConfidence: minConfidence || 0,
+});
+
+/**
+ * Build the workbook. Returns { file, name, contentType, reads, images }
+ * - the caller deletes `file`.
+ *
+ * One file, two sheets: สรุป and รายละเอียด. The picture for each read sits in
+ * the row that read is on, so nobody has to go looking for a filename in a
+ * folder. Rows are streamed - read one at a time from SQLite, written straight
+ * into the sheet XML on disk, counted into the summary as they pass - so
+ * nothing proportional to the number of reads is ever held in memory.
+ */
+const buildXlsx = (params) => {
+  const {
+    from, to, deviceIds, minConfidence, includeImages, onProgress,
+  } = params;
+  const meta = buildMeta(params);
+  const stamp = localTime(new Date().toISOString()).replace(/[-: ]/g, '').slice(0, 14);
+  const { dir: tmpDir, base } = tempBase(stamp);
+  const outFile = `${base}.xlsx`;
+
+  // Thumbnails first: they are made in one batch, because starting a converter
+  // per picture costs more than the converting does.
+  const cap = includeImages ? maxImagesInFile() : 0;
+  const wanted = includeImages ? imageFilesInRange({ from, to, deviceIds }, cap) : [];
+  const totalImages = wanted.length;
+  let thumbs = new Map();
+  let thumbDir = null;
+  let tool = { kind: 'none', label: '' };
+  if (wanted.length) {
+    if (onProgress) onProgress({ stage: 'thumbs', total: wanted.length });
+    const made = imageThumb.makeThumbs(
+      wanted
+        .map((file) => ({ key: file, src: imageStore.absPath(file) }))
+        .filter((f) => fs.existsSync(f.src)),
+      tmpDir,
+    );
+    thumbs = made.thumbs;
+    thumbDir = made.dir;
+    tool = made.tool;
+  }
+
+  const wb = new XlsxWriter(outFile, { tmpDir });
+  const summarySheet = wb.sheet('สรุป', { columns: SUMMARY_COLUMNS });
+  const detailSheet = wb.sheet('รายละเอียด', {
+    columns: SHEET_COLUMNS,
+    freezeRows: 1,
+    autoFilter: `A1:${colName(SHEET_HEADER.length - 1)}1`,
+  });
+
+  const summary = createSummary(minConfidence);
+  const maxHeightPx = imageHeightPx();
+  const byteBudget = maxImageBytes();
+  let reads = 0;
+  let images = 0;
+  let imageBytes = 0;
+  let stoppedOnSize = false;
+
+  try {
+    detailSheet.row(SHEET_HEADER, { style: STYLE.header, heightPx: 34 });
+
+    for (const r of iterateRows({ from, to, deviceIds })) {
+      reads += 1;
+      summary.add(r);
+
+      const cells = detailRow(r, reads, minConfidence).slice(0, -1);
+      let source = null;
+      let info = null;
+      if (includeImages && r.image_file && images < cap && !stoppedOnSize) {
+        const thumb = thumbs.get(r.image_file);
+        const file = thumb || imageStore.absPath(r.image_file);
+        let size = 0;
+        try {
+          size = fs.statSync(file).size;
+          // measured before the row is written: a frame that cannot be read
+          // has to leave the row plain, and by then the row is already out
+          info = imageInfoOf(file);
+        } catch (error) {
+          info = null; // the frame has been evicted since the read was stored
+        }
+        if (info) {
+          if (imageBytes + size > byteBudget) stoppedOnSize = true;
+          else {
+            source = file;
+            imageBytes += size;
+          }
+        }
+      }
+
+      if (source) {
+        // the cell itself stays empty - the picture is drawn over it
+        const rowNumber = detailSheet.row(cells, {
+          style: STYLE.middle,
+          heightPx: maxHeightPx + 8,
+        });
+        detailSheet.picture({
+          file: source,
+          info,
+          column: IMAGE_COLUMN,
+          row: rowNumber,
+          maxWidthPx: 230,
+          maxHeightPx,
+          descr: `${r.value} ${localTime(r.at)}`,
+        });
+        images += 1;
+      } else {
+        // no picture: say where it is instead, so the row is not a dead end
+        cells[IMAGE_COLUMN] = r.image_file ? 'images/' + r.image_file : '';
+        detailSheet.row(cells);
+      }
+
+      if (onProgress && reads % 2000 === 0) onProgress({ reads, images });
+    }
+
+    const notes = [];
+    if (includeImages) {
+      const limitNote = stoppedOnSize
+        ? ` (หยุดที่ ${Math.round(byteBudget / 1048576)} MB เพื่อไม่ให้ไฟล์ใหญ่เกินจะเปิด)`
+        : (totalImages > images || images >= cap ? ` (จำกัดไว้ที่ ${cap} รูปต่อไฟล์)` : '');
+      notes.push(['รูปในไฟล์นี้', totalImages
+        ? `${images} รูป จากทั้งหมด ${totalImages} รูป${limitNote}`
+        : 'ไม่มีรูปในช่วงที่เลือก']);
+      if (images > 0 && tool.kind === 'none') {
+        notes.push(['หมายเหตุเรื่องรูป',
+          'เครื่องนี้ไม่มีโปรแกรมย่อรูป จึงแนบไฟล์ webp ต้นฉบับ - '
+          + 'ถ้ารูปไม่ขึ้นใน Excel รุ่นเก่า ให้ติดตั้ง python3-pil หรือ ffmpeg บนเครื่อง center']);
+      } else if (images > 0) {
+        notes.push(['ย่อรูปด้วย', tool.label]);
+      }
+    }
+
+    for (const block of summaryBlocks(summary.result(), meta, notes)) {
+      summarySheet.row(block.cells, { style: BLOCK_STYLE[block.kind] });
+    }
+
+    wb.close();
+  } catch (error) {
+    try { for (const s of wb.sheets) if (s.fd !== null) s.close(); } catch (e) { /* closing up */ }
+    for (const s of wb.sheets) fs.unlink(s.file, () => {});
+    fs.unlink(outFile, () => {});
+    throw error;
+  } finally {
+    imageThumb.cleanup(thumbDir);
+  }
+
+  return {
+    file: outFile,
+    name: `ocr-report-${stamp}.xlsx`,
+    contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    reads,
+    images,
+  };
+};
+
+/**
+ * The older ZIP layout: detail.csv, summary.csv and every image as a file.
+ * Kept for the command-line tool, where the point is sometimes to get all the
+ * frames out of the store rather than to read a report.
+ */
+const buildZip = (params) => {
+  const {
+    from, to, deviceIds, minConfidence, includeImages, onProgress,
+  } = params;
+  const meta = buildMeta(params);
+  const stamp = localTime(new Date().toISOString()).replace(/[-: ]/g, '').slice(0, 14);
+  const { base } = tempBase(stamp);
+  const detailFile = `${base}-detail.csv`;
+  const zipFile = `${base}.zip`;
 
   const summary = createSummary(minConfidence);
   const imageFiles = new Set();
@@ -442,9 +673,14 @@ const build = ({ from, to, deviceIds, minConfidence, includeImages, scopeLabel, 
   return {
     file: zipFile,
     name: `ocr-report-${stamp}.zip`,
+    contentType: 'application/zip',
     reads,
     images,
   };
 };
 
-module.exports = { build, preview, queryRows, iterateRows, summarise, detailCsv };
+const build = (params) => (params && params.format === 'zip' ? buildZip(params) : buildXlsx(params));
+
+module.exports = {
+  build, buildXlsx, buildZip, preview, queryRows, iterateRows, summarise, detailCsv, summaryCsv,
+};

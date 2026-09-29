@@ -150,6 +150,9 @@ const reportParams = (raw) => {
     scopeLabel: scope.label,
     minConfidence: Number(body.minConfidence) || 0,
     includeImages: body.includeImages !== false,
+    // one xlsx with the pictures inside it, unless the caller asks for the
+    // old zip of csv files plus an images folder
+    format: body.format === 'zip' ? 'zip' : 'xlsx',
   };
 };
 
@@ -178,7 +181,7 @@ const sendReport = async (req, res, params) => {
     console.log(`report: done in ${((Date.now() - startedAt) / 1000).toFixed(1)}s - `
       + `${built.reads} reads, ${built.images} images, ${Math.round(fs.statSync(built.file).size / 1048576)} MB`);
 
-    // An archive holding nothing but CSV headers looks like a broken export.
+    // A file holding nothing but headers looks like a broken export.
     // Say what actually happened: the scope matched no reads.
     if (built.reads === 0) {
       fs.unlink(built.file, () => {});
@@ -189,7 +192,7 @@ const sendReport = async (req, res, params) => {
           + 'ลองขยายช่วงเวลา หรือเลือกอุปกรณ์อื่น - อุปกรณ์ที่เพิ่งต่อเข้าระบบจะยังไม่มีประวัติย้อนหลัง',
       });
     }
-    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Type', built.contentType || 'application/octet-stream');
     res.setHeader('Content-Disposition', 'attachment; filename="' + built.name + '"');
     res.setHeader('X-Report-Reads', String(built.reads));
     res.setHeader('X-Report-Images', String(built.images));
