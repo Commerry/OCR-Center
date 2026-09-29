@@ -1,4 +1,5 @@
 const fs = require('fs');
+const zlib = require('zlib');
 
 /*
  * Minimal ZIP writer (store method, no compression).
@@ -23,7 +24,12 @@ const CRC_TABLE = (() => {
   return table;
 })();
 
+// node's own CRC32 is ~15x the byte loop below on the same data, and image
+// bytes dominate a report: use it when the runtime has it (node >= 20.12)
+const hasNativeCrc = typeof zlib.crc32 === 'function';
+
 const crc32 = (buf) => {
+  if (hasNativeCrc) return zlib.crc32(buf) >>> 0;
   let c = -1;
   for (let i = 0; i < buf.length; i += 1) c = CRC_TABLE[(c ^ buf[i]) & 0xff] ^ (c >>> 8);
   return (c ^ -1) >>> 0;
@@ -34,6 +40,13 @@ const dosTime = (date) => {
   const time = ((date.getHours() << 11) | (date.getMinutes() << 5) | (date.getSeconds() / 2)) & 0xffff;
   const day = (((date.getFullYear() - 1980) << 9) | ((date.getMonth() + 1) << 5) | date.getDate()) & 0xffff;
   return { time, day };
+};
+
+// running CRC for the chunked path when the runtime has no native one
+const crcSlow = (buf, previous = 0) => {
+  let c = ~previous;
+  for (let i = 0; i < buf.length; i += 1) c = CRC_TABLE[(c ^ buf[i]) & 0xff] ^ (c >>> 8);
+  return (c ^ -1) >>> 0;
 };
 
 class ZipWriter {
@@ -52,27 +65,36 @@ class ZipWriter {
     }
   }
 
-  /** Add one file. `data` is a Buffer, or pass `filePath` to stream from disk. */
+  /** Add one file. `data` is a Buffer, or pass `filePath` to read from disk. */
   add(name, data, filePath) {
     const nameBuf = Buffer.from(name, 'utf8');
     const { time, day } = dosTime(new Date());
     let size;
     let crc;
+    let payload = data;
 
     if (filePath) {
-      const stat = fs.statSync(filePath);
-      size = stat.size;
-      // crc first (read once), then copy the bytes
-      const src = fs.openSync(filePath, 'r');
-      const chunk = Buffer.alloc(64 * 1024);
-      let c = -1;
-      let bytes;
-      // eslint-disable-next-line no-cond-assign
-      while ((bytes = fs.readSync(src, chunk, 0, chunk.length, null)) > 0) {
-        for (let i = 0; i < bytes; i += 1) c = CRC_TABLE[(c ^ chunk[i]) & 0xff] ^ (c >>> 8);
+      size = fs.statSync(filePath).size;
+      // A report is mostly image bytes, and the old code read every one twice:
+      // once for the checksum, once to copy. An image is small enough to hold,
+      // so read it once and use the same buffer for both.
+      if (size <= 8 * 1024 * 1024) {
+        payload = fs.readFileSync(filePath);
+        crc = crc32(payload);
+        filePath = null; // written from the buffer below
+      } else {
+        const src = fs.openSync(filePath, 'r');
+        const chunk = Buffer.alloc(256 * 1024);
+        let c = 0;
+        let bytes;
+        // eslint-disable-next-line no-cond-assign
+        while ((bytes = fs.readSync(src, chunk, 0, chunk.length, null)) > 0) {
+          const part = chunk.subarray(0, bytes);
+          c = hasNativeCrc ? zlib.crc32(part, c) : crcSlow(part, c);
+        }
+        crc = c >>> 0;
+        fs.closeSync(src);
       }
-      crc = (c ^ -1) >>> 0;
-      fs.closeSync(src);
     } else {
       size = data.length;
       crc = crc32(data);
@@ -97,7 +119,7 @@ class ZipWriter {
 
     if (filePath) {
       const src = fs.openSync(filePath, 'r');
-      const chunk = Buffer.alloc(64 * 1024);
+      const chunk = Buffer.alloc(256 * 1024);
       let bytes;
       // eslint-disable-next-line no-cond-assign
       while ((bytes = fs.readSync(src, chunk, 0, chunk.length, null)) > 0) {
@@ -105,7 +127,7 @@ class ZipWriter {
       }
       fs.closeSync(src);
     } else {
-      this._write(data);
+      this._write(payload);
     }
 
     this.entries.push({ nameBuf, crc, size, headerOffset, time, day });
