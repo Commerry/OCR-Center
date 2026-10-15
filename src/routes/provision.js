@@ -70,6 +70,7 @@ let buildError = null;
 
 router.get('/firmware', wrap(() => ({
   bundles: firmware.list(),
+  nodeModules: firmware.nmList(),
   building: firmware.isBuilding(),
   buildLog,
   buildError,
@@ -108,6 +109,12 @@ router.post('/jobs', wrap((req) => {
     centerPort: centerPort(),
   });
   if (!created.length) throw new Error('กล้องที่เลือกมีงานค้างอยู่แล้วทุกตัว');
+  return { jobs: created };
+}));
+
+router.post('/jobs/retry-failed', wrap(() => {
+  const created = jobs.retryFailed({ centerPort: centerPort() });
+  if (!created.length) throw new Error('ไม่มีงานที่ไม่สำเร็จให้ทำซ้ำ');
   return { jobs: created };
 }));
 

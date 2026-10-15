@@ -33,9 +33,16 @@ locate_app
 [ -n "$APP_FOUND" ] || fail "ไม่พบโปรแกรม OCR บนเครื่องนี้ - ใช้ 'ติดตั้งกล้องใหม่' แทน"
 ok "โปรแกรมอยู่ที่ $APP (pm2: ${PM2_NAME:-ไม่ได้รันผ่าน pm2})"
 [ -f "$APP/config.json" ] || fail "ไม่มี $APP/config.json - ไม่อัปเดตเพราะไม่มีอะไรให้ปกป้อง ตรวจเครื่องนี้ด้วยมือก่อน"
-# the download and its unpacked copy need about this much, and give it back
-FREE=$(df -Pm "$HOME" | awk 'NR==2 {print $4}')
-[ "${FREE:-0}" -gt 500 ] || fail "พื้นที่ว่างเหลือ ${FREE} MB - ต้องมีอย่างน้อย 500 MB ระหว่างอัปเดต (คืนให้หลังเสร็จ)"
+# the download and its unpacked copy need about this much, and give it back.
+# A card that is short gets its logs and caches cleared first - full disks
+# are what has taken cameras in this fleet down before.
+FREE=$(free_mb)
+if [ "${FREE:-0}" -lt 800 ]; then
+    warn "ดิสก์เหลือ ${FREE} MB - ล้างไฟล์ที่ไม่จำเป็นก่อน"
+    free_space
+    FREE=$(free_mb)
+fi
+[ "${FREE:-0}" -gt 500 ] || fail "พื้นที่ว่างเหลือ ${FREE} MB แม้ล้าง log/แคชแล้ว - ต้องมีอย่างน้อย 500 MB ระหว่างอัปเดต ตรวจว่าอะไรกินดิสก์ (เช่นรูปใน Img)"
 OLD_VERSION=$(sed -n 's/.*"version" *: *"\([^"]*\)".*/\1/p' "$APP/.firmware.json" 2>/dev/null | head -1)
 [ -z "$OLD_VERSION" ] && OLD_VERSION="git-$(git -C "$APP" log -1 --format='%cd-%h' --date=format:'%Y%m%d' 2>/dev/null || echo unknown)"
 ok "เวอร์ชันเดิม: $OLD_VERSION -> ใหม่: $BUNDLE_VERSION / ดิสก์ว่าง ${FREE} MB"
@@ -166,6 +173,9 @@ rollback() {
     (cd "$APP" && xargs -0 -r rm -f < "$ADDED_LIST") 2>/dev/null
     # config.json is left as it is: the old program ignores the "site" block,
     # and putting back the pre-update copy would undo any settings saved since
+    if [ -d "$APP/node_modules.old" ]; then
+        rm -rf "$APP/node_modules" && mv "$APP/node_modules.old" "$APP/node_modules"
+    fi
     if [ "$DEPS_CHANGED" = "1" ]; then
         (cd "$APP" && npm install --no-audit --no-fund --legacy-peer-deps --loglevel=error >/dev/null 2>&1)
     fi
@@ -181,8 +191,13 @@ rollback() {
 
 step "8/9 ไลบรารี"
 cd "$APP" || fail "เข้า $APP ไม่ได้"
+# the center's packed node_modules first: no internet needed, and it is the
+# exact set a camera on this firmware already runs with. npm only if not.
+if [ "$DEPS_CHANGED" = "1" ] && use_nm_cache; then
+    DEPS_CHANGED=done
+fi
 if [ "$DEPS_CHANGED" = "1" ]; then
-    info "ติดตั้งไลบรารีใหม่ (ต้องออกเน็ต${PROXY:+ ผ่าน proxy $PROXY})"
+    info "ติดตั้งไลบรารีใหม่ด้วย npm (ต้องออกเน็ต${PROXY:+ ผ่าน proxy $PROXY})"
     NPM_LOG=/tmp/ocr-npm.log
     if ! npm install --no-audit --no-fund --legacy-peer-deps --loglevel=error > "$NPM_LOG" 2>&1; then
         tail -n 15 "$NPM_LOG"
@@ -215,10 +230,13 @@ fi
 
 step "9/9 รีสตาร์ทและตรวจผล"
 no_proxy_env
+ensure_redis
 ocr_restart
 if ! wait_web 90; then
+    # what the new version said before it gave up, kept in the job log
+    diagnose
     rollback
-    fail "เวอร์ชันใหม่ไม่ขึ้นใน 90 วินาที - ถอยกลับเวอร์ชันเดิมแล้ว"
+    fail "เวอร์ชันใหม่ไม่ขึ้นใน 90 วินาที - ถอยกลับเวอร์ชันเดิมแล้ว (ดูส่วนวินิจฉัยใน log)"
 fi
 pm2_run save --force >/dev/null 2>&1
 RESTORED=$(python3 - "$APP/config.json" "$SITE_JSON" <<'PYSITE'
@@ -238,6 +256,7 @@ if [ "$RESTORED" = "yes" ]; then
 fi
 # it started: the files set aside for undoing are no longer needed
 forget_rollback
+rm -rf "$APP/node_modules.old"
 ok "หน้าเว็บตอบ 200 - ใช้ $BUNDLE_VERSION แล้ว / ที่เก็บไว้บนกล้อง: config.json + ชื่อไซต์เท่านั้น"
 echo "@@VERSION $BUNDLE_VERSION"
 echo "@@OK"

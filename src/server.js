@@ -58,11 +58,11 @@ app.get('/api/health', (req, res) => {
 app.get('/fw/:token', (req, res) => {
   // eslint-disable-next-line global-require
   const firmware = require('./provision/firmware');
-  const bundle = firmware.resolveToken(req.params.token);
-  if (!bundle) return res.status(404).send('ไม่พบไฟล์ หรือลิงก์หมดอายุ');
-  console.log(`firmware: ${bundle.version} -> ${req.ip}`);
+  const found = firmware.resolveToken(req.params.token);
+  if (!found) return res.status(404).send('ไม่พบไฟล์ หรือลิงก์หมดอายุ');
+  console.log(`firmware: ${found.label} -> ${req.ip}`);
   res.setHeader('Content-Type', 'application/gzip');
-  return res.sendFile(firmware.fileOf(bundle));
+  return res.sendFile(found.file);
 });
 
 // Camera tools (scan / install / firmware) - behind the login

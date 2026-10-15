@@ -20,6 +20,7 @@ const settings = require('./settings');
  */
 const DIR = path.join(__dirname, '..', '..', 'data', 'firmware');
 const INDEX = path.join(DIR, 'index.json');
+const NM_INDEX = path.join(DIR, 'node_modules.json');
 const KEEP_BUNDLES = Math.max(1, parseInt(process.env.FIRMWARE_KEEP, 10) || 3);
 
 const run = (cmd, args, opts = {}) => new Promise((resolve, reject) => {
@@ -70,6 +71,46 @@ const remoteHead = async () => {
   return sha ? { sha, short: sha.slice(0, 7), repo, branch } : null;
 };
 
+/*
+ * The libraries a firmware declares, reduced to a short key. Two firmware
+ * builds with the same lists can share one node_modules - which is what lets
+ * a camera with no route to npm take the set from the center instead.
+ */
+const depsKey = (pkg) => {
+  const pick = {};
+  for (const k of ['dependencies', 'devDependencies', 'optionalDependencies']) {
+    const v = pkg[k] || {};
+    pick[k] = Object.fromEntries(Object.keys(v).sort().map((n) => [n, v[n]]));
+  }
+  return crypto.createHash('sha256').update(JSON.stringify(pick)).digest('hex').slice(0, 16);
+};
+
+/** The key for a bundle - stored at build time, worked out once for older ones. */
+const depsHashOf = async (bundle) => {
+  if (bundle.depsHash) return bundle.depsHash;
+  const text = await run('tar', ['-xzOf', bundle.file, './package.json'], { cwd: DIR });
+  const hash = depsKey(JSON.parse(text));
+  writeIndex(readIndex().map((b) => (b.id === bundle.id ? { ...b, depsHash: hash } : b)));
+  return hash;
+};
+
+/* node_modules packed from a camera that runs that set - kept for the newest two */
+const nmList = () => {
+  try {
+    return JSON.parse(fs.readFileSync(NM_INDEX, 'utf8'));
+  } catch (e) {
+    return [];
+  }
+};
+const nmFor = (depsHash) => nmList()
+  .find((n) => n.depsHash === depsHash && fs.existsSync(path.join(DIR, n.file))) || null;
+const nmSave = (entry) => {
+  const list = [entry, ...nmList().filter((n) => n.depsHash !== entry.depsHash)];
+  for (const old of list.slice(2)) fs.rmSync(path.join(DIR, old.file), { force: true });
+  fs.mkdirSync(DIR, { recursive: true });
+  fs.writeFileSync(NM_INDEX, JSON.stringify(list.slice(0, 2), null, 2));
+};
+
 let building = null;
 
 /**
@@ -96,6 +137,7 @@ const build = async (log = () => {}) => {
     }
 
     const version = `${commitDate.slice(0, 10).replace(/-/g, '')}-${short}`;
+    const depsHash = depsKey(JSON.parse(fs.readFileSync(path.join(tmp, 'package.json'), 'utf8')));
     const meta = {
       version, sha, commitDate, subject, repo, branch, builtAt: new Date().toISOString(),
     };
@@ -115,7 +157,7 @@ const build = async (log = () => {}) => {
     const stat = fs.statSync(path.join(DIR, file));
     const sha256 = await sha256File(path.join(DIR, file));
 
-    const bundle = { id: version, file, size: stat.size, sha256, ...meta };
+    const bundle = { id: version, file, size: stat.size, sha256, depsHash, ...meta };
     // a bundle is ~140 MB and this machine's disk has filled up before: keep
     // the newest few, which is all a rollback ever needs
     const kept = [bundle, ...readIndex().filter((b) => b.id !== version)];
@@ -150,20 +192,27 @@ const remove = (id) => {
 const tokens = new Map();
 const TOKEN_TTL_MS = 2 * 3600 * 1000;
 
-const issueToken = (bundleId) => {
+const issueFileToken = (file, label) => {
   const token = crypto.randomBytes(18).toString('hex');
-  tokens.set(token, { bundleId, expires: Date.now() + TOKEN_TTL_MS });
+  tokens.set(token, { file, label, expires: Date.now() + TOKEN_TTL_MS });
   for (const [k, v] of tokens) if (v.expires < Date.now()) tokens.delete(k);
   return token;
 };
 
+const issueToken = (bundleId) => {
+  const bundle = find(bundleId);
+  return bundle ? issueFileToken(fileOf(bundle), bundle.version) : null;
+};
+
+/** { file, label } for a live token, else null. */
 const resolveToken = (token) => {
   const t = tokens.get(token);
-  if (!t || t.expires < Date.now()) return null;
-  return find(t.bundleId);
+  if (!t || t.expires < Date.now() || !fs.existsSync(t.file)) return null;
+  return t;
 };
 
 module.exports = {
-  list, latest, find, fileOf, build, remove, remoteHead, issueToken, resolveToken,
+  list, latest, find, fileOf, build, remove, remoteHead, issueToken, issueFileToken, resolveToken,
+  depsHashOf, nmFor, nmSave, nmList, sha256File, DIR,
   isBuilding: () => Boolean(building),
 };

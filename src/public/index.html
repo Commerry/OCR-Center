@@ -721,6 +721,12 @@
         <!-- งาน -->
         <section class="set-sec" id="sec-jobs">
           <div class="set-lead">งานติดตั้ง/อัปเดตที่สั่งไป — คลิกแถวเพื่อดูรายละเอียดสด</div>
+          <div class="set-actions" style="margin:0 0 .8rem" id="retryRow" hidden>
+            <button class="btn grad" onclick="retryFailed()" id="retryBtn">อัปเดตซ้ำตัวที่ไม่สำเร็จ</button>
+            <span class="set-status" id="retryStatus" style="margin:0">
+              รอบใหม่จะซ่อมสิ่งที่ซ่อมได้เอง: ส่งไฟล์ทาง ssh ถ้ากล้องโหลดเองไม่ได้, ใช้ไลบรารีจาก center ถ้าออกเน็ตไม่ได้, ล้างดิสก์ถ้าไม่พอ
+            </span>
+          </div>
           <div class="set-table-wrap" id="jobsTable"><div class="set-empty">ยังไม่มีงาน</div></div>
           <div id="jobDetail"></div>
         </section>
@@ -1829,8 +1835,32 @@
       }
     }
 
+    function latestFailedCount() {
+      const latest = new Map();
+      for (const j of prov.jobs) {
+        const prev = latest.get(j.ip);
+        if (!prev || String(j.queuedAt) > String(prev.queuedAt)) latest.set(j.ip, j);
+      }
+      return [...latest.values()].filter((j) => j.status === 'failed').length;
+    }
+
+    async function retryFailed() {
+      const n = latestFailedCount();
+      if (!n || !confirm('สั่งงานซ้ำให้กล้อง ' + n + ' ตัวที่ไม่สำเร็จล่าสุด?')) return;
+      try {
+        const d = await provApi('/jobs/retry-failed', { method: 'POST' });
+        setStatus('retryStatus', 'สั่งซ้ำแล้ว ' + d.jobs.length + ' งาน', 'ok');
+        loadJobs();
+      } catch (e) {
+        setStatus('retryStatus', e.message, 'err');
+      }
+    }
+
     function renderJobs() {
       const box = document.getElementById('jobsTable');
+      const failedNow = latestFailedCount();
+      document.getElementById('retryRow').hidden = !failedNow;
+      document.getElementById('retryBtn').textContent = 'อัปเดตซ้ำตัวที่ไม่สำเร็จ (' + failedNow + ')';
       if (!prov.jobs.length) { box.innerHTML = '<div class="set-empty">ยังไม่มีงาน</div>'; return; }
       box.innerHTML = '<table><thead><tr><th>กล้อง</th><th>งาน</th><th>สถานะ</th><th style="width:34%">ความคืบหน้า</th><th>เวอร์ชัน</th><th>เริ่ม</th></tr></thead><tbody>' +
         prov.jobs.map((j) => {
@@ -1882,6 +1912,7 @@
       try {
         const d = await provApi('/firmware');
         prov.bundles = d.bundles || [];
+        prov.nodeModules = d.nodeModules || [];
         prov.versions = d.versions || {};
         for (const id of ['instBundle', 'updBundle']) {
           const sel = document.getElementById(id);
@@ -1910,11 +1941,15 @@
     function renderFirmwareTable() {
       const box = document.getElementById('fwTable');
       if (!prov.bundles.length) { box.innerHTML = '<div class="set-empty">ยังไม่มีไฟล์ — กดดึงเวอร์ชันล่าสุดก่อน</div>'; return; }
-      box.innerHTML = '<table><thead><tr><th>เวอร์ชัน</th><th>คอมมิต</th><th>ขนาด</th><th>ทำเมื่อ</th><th></th></tr></thead><tbody>' +
+      const nmOf = (b) => (prov.nodeModules || []).find((n) => b.depsHash && n.depsHash === b.depsHash);
+      box.innerHTML = '<table><thead><tr><th>เวอร์ชัน</th><th>คอมมิต</th><th>ขนาด</th><th title="node_modules ที่เก็บจากกล้องที่อัปผ่านแล้ว ให้กล้องที่ออกเน็ตไม่ได้ใช้">ชุดไลบรารีสำรอง</th><th>ทำเมื่อ</th><th></th></tr></thead><tbody>' +
         prov.bundles.map((b) =>
           '<tr><td>' + esc(b.version) + '</td>' +
           '<td style="font-family:var(--font-ui)">' + esc(b.subject || '') + '</td>' +
           '<td>' + (b.size / 1048576).toFixed(1) + ' MB</td>' +
+          '<td style="font-family:var(--font-ui)">' + (nmOf(b)
+            ? '<span class="tag ok">มี</span> <span class="step-text" style="display:inline">จาก ' + esc(nmOf(b).from) + '</span>'
+            : '<span class="tag muted" title="จะเก็บอัตโนมัติจากกล้องตัวแรกที่อัปเวอร์ชันนี้สำเร็จ">ยังไม่มี</span>') + '</td>' +
           '<td>' + esc(new Date(b.builtAt).toLocaleString('th-TH')) + '</td>' +
           '<td><button class="btn" onclick="deleteFirmware(\'' + esc(b.id) + '\')">ลบ</button></td></tr>'
         ).join('') + '</tbody></table>';

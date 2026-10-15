@@ -109,6 +109,53 @@ const ts = () => {
     + `${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}`;
 };
 
+/*
+ * After a camera has come up on a firmware, its node_modules is a set known
+ * to work with that firmware's libraries. The first such camera's set is
+ * packed and kept here, so cameras that cannot reach npm - several subnets
+ * cannot - take it from the center instead of failing.
+ */
+const harvesting = new Set();
+const harvestNodeModules = async (job, bundle) => {
+  let depsHash;
+  try {
+    depsHash = await firmware.depsHashOf(bundle);
+  } catch (e) {
+    return;
+  }
+  if (firmware.nmFor(depsHash) || harvesting.has(depsHash)) return;
+  harvesting.add(depsHash);
+  const file = `node_modules-${depsHash}.tar.gz`;
+  const part = path.join(firmware.DIR, `${file}.part`);
+  try {
+    appendLog(job, 'เก็บชุดไลบรารีจากกล้องนี้ไว้ที่ center (ให้กล้องที่ออกเน็ตไม่ได้ใช้) ...');
+    const script = [
+      readScript('common.sh'),
+      'locate_app >/dev/null 2>&1',
+      '[ -n "$APP_FOUND" ] && [ -d "$APP/node_modules" ] || exit 3',
+      'tar -czf - -C "$APP" node_modules',
+    ].join('\n');
+    const r = await ssh.pullToFile(job.ip, script, part);
+    const size = fs.existsSync(part) ? fs.statSync(part).size : 0;
+    if (!r.ok || size < 1024 * 1024) {
+      fs.rmSync(part, { force: true });
+      appendLog(job, `  เก็บชุดไลบรารีไม่สำเร็จ (${r.error || `ได้ ${size} ไบต์`}) - ไม่กระทบการอัปเดต`);
+      return;
+    }
+    const sha256 = await firmware.sha256File(part);
+    fs.renameSync(part, path.join(firmware.DIR, file));
+    firmware.nmSave({
+      depsHash, file, size, sha256, from: job.ip, version: bundle.version, at: new Date().toISOString(),
+    });
+    appendLog(job, `  ✓ เก็บแล้ว ${(size / 1048576).toFixed(1)} MB`);
+  } catch (e) {
+    fs.rmSync(part, { force: true });
+    appendLog(job, `  เก็บชุดไลบรารีไม่สำเร็จ: ${e.message} - ไม่กระทบการอัปเดต`);
+  } finally {
+    harvesting.delete(depsHash);
+  }
+};
+
 const runJob = async (job) => {
   job.status = 'running';
   job.startedAt = new Date().toISOString();
@@ -121,46 +168,83 @@ const runJob = async (job) => {
     return;
   }
 
-  const token = firmware.issueToken(bundle.id);
   const centerUrl = `http://${job.centerIp}:${job.centerPort}`;
-  const vars = {
-    // read as late as possible: a job that sat in the queue must not set
-    // the camera to the time it was queued
-    NOW_UTC: ts(),
-    TZ_NAME: s.timezone,
-    PROXY: settings.proxyFor(job.ip, s),
-    CENTER_URL: centerUrl,
-    CENTER_HOST: job.centerIp,
-    BUNDLE_URL: `${centerUrl}/fw/${token}`,
-    BUNDLE_SHA256: bundle.sha256,
-    BUNDLE_VERSION: bundle.version,
-    SITE_CODE: job.site.code,
-    SITE_TITLE: job.site.title,
-    SITE_COMPANY: job.site.company,
-    API_KEY: process.env.API_KEY || '',
-    FORCE: job.force ? '1' : '0',
-  };
-  const script = [
-    ssh.exportsFor(vars),
-    readScript('common.sh'),
-    readScript(job.type === 'install' ? 'install.sh' : 'update.sh'),
-  ].join('\n');
+  let nm = null;
+  try {
+    nm = firmware.nmFor(await firmware.depsHashOf(bundle));
+  } catch (e) { /* no cached set - npm is the only way, as before */ }
 
   appendLog(job, `${job.type === 'install' ? 'ติดตั้ง' : 'อัปเดต'} ${bundle.version} -> ${job.ip}`
-    + `${vars.PROXY ? ` (proxy ${vars.PROXY})` : ''}`);
+    + `${settings.proxyFor(job.ip, s) ? ` (proxy ${settings.proxyFor(job.ip, s)})` : ''}`
+    + `${nm ? ' / มีชุดไลบรารีสำรองบน center' : ''}`);
 
-  const result = await ssh.runScript(job.ip, script, {
-    onLine: (line) => handleLine(job, line),
-    timeoutMs: (job.type === 'install' ? 75 : 30) * 60 * 1000,
-  });
+  let result;
+  let pushed = false;
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    job.error = null;
+    job.reportedOk = false;
+    const vars = {
+      // read as late as possible: a job that sat in the queue must not set
+      // the camera to the time it was queued
+      NOW_UTC: ts(),
+      TZ_NAME: s.timezone,
+      PROXY: settings.proxyFor(job.ip, s),
+      CENTER_URL: centerUrl,
+      CENTER_HOST: job.centerIp,
+      BUNDLE_URL: `${centerUrl}/fw/${firmware.issueToken(bundle.id)}`,
+      BUNDLE_SHA256: bundle.sha256,
+      BUNDLE_VERSION: bundle.version,
+      SITE_CODE: job.site.code,
+      SITE_TITLE: job.site.title,
+      SITE_COMPANY: job.site.company,
+      API_KEY: process.env.API_KEY || '',
+      FORCE: job.force ? '1' : '0',
+      // sudo on a camera that asks for a password gets the ssh one
+      SUDO_PASS: s.ssh.password || '',
+      NM_URL: nm ? `${centerUrl}/fw/${firmware.issueFileToken(path.join(firmware.DIR, nm.file), `node_modules ${nm.depsHash}`)}` : '',
+      NM_SHA256: nm ? nm.sha256 : '',
+    };
+    const script = [
+      ssh.exportsFor(vars),
+      readScript('common.sh'),
+      readScript(job.type === 'install' ? 'install.sh' : 'update.sh'),
+    ].join('\n');
+
+    let needBundle = false;
+    // eslint-disable-next-line no-await-in-loop
+    result = await ssh.runScript(job.ip, script, {
+      onLine: (line) => {
+        if (line.trim() === '@@NEED_BUNDLE') needBundle = true;
+        handleLine(job, line);
+      },
+      timeoutMs: (job.type === 'install' ? 75 : 30) * 60 * 1000,
+    });
+
+    // the camera could not download from the center's web port: send the
+    // firmware down the ssh connection instead, then run the job again
+    if (needBundle && !pushed && attempt === 1) {
+      appendLog(job, `กล้องโหลดไฟล์จาก ${centerUrl} ไม่ได้ - ส่งไฟล์เฟิร์มแวร์ให้ทาง ssh แทน (${(bundle.size / 1048576).toFixed(0)} MB) ...`);
+      // eslint-disable-next-line no-await-in-loop
+      const push = await ssh.pushFile(job.ip, firmware.fileOf(bundle), '/tmp/ocr-fw.tgz');
+      if (!push.ok) {
+        job.error = `ส่งไฟล์ทาง ssh ไม่สำเร็จ: ${push.error || push.code}`;
+        break;
+      }
+      pushed = true;
+      appendLog(job, '  ✓ ส่งไฟล์แล้ว - เริ่มงานใหม่');
+      continue;
+    }
+    break;
+  }
 
   job.finishedAt = new Date().toISOString();
-  if (job.reportedOk && result.code === 0) {
+  if (job.reportedOk && result && result.code === 0) {
     job.status = 'ok';
     rememberVersion(job.mac || job.ip, { version: job.version || bundle.version, ip: job.ip });
+    await harvestNodeModules(job, bundle);
   } else {
     job.status = 'failed';
-    if (!job.error) {
+    if (!job.error && result) {
       if (result.authFailed) job.error = 'รหัสผ่าน ssh ไม่ถูก';
       else if (result.timedOut) job.error = 'ใช้เวลานานเกินกำหนด - ยกเลิกแล้ว';
       else if (result.unreachable) job.error = 'ต่อ ssh ไม่ได้';
@@ -238,4 +322,33 @@ const getJob = (id, since = 0) => {
   return { ...summary(job), from, log: job.log.slice(from - first) };
 };
 
-module.exports = { create, listJobs, getJob, readVersions, rememberVersion };
+/**
+ * Run again every camera whose most recent job failed - same job type, same
+ * firmware, same target. What changed since is the fix: a corrected script,
+ * a proxy set for the subnet, a library set now on the center.
+ */
+const retryFailed = ({ centerPort }) => {
+  const latest = new Map(); // ip -> newest job for it
+  for (const job of jobs.values()) {
+    const prev = latest.get(job.ip);
+    if (!prev || String(job.queuedAt) > String(prev.queuedAt)) latest.set(job.ip, job);
+  }
+  const failed = [...latest.values()].filter((j) => j.status === 'failed');
+  const created = [];
+  for (const type of ['install', 'update']) {
+    for (const [bundleId, group] of Object.entries(failed.filter((j) => j.type === type)
+      .reduce((acc, j) => ({ ...acc, [j.bundleId]: [...(acc[j.bundleId] || []), j] }), {}))) {
+      if (!firmware.find(bundleId)) continue;
+      created.push(...create({
+        type,
+        bundleId,
+        centerPort,
+        site: group[0].site,
+        targets: group.map((j) => ({ ip: j.ip, mac: j.mac, centerIp: j.centerIp, label: j.label })),
+      }));
+    }
+  }
+  return created;
+};
+
+module.exports = { create, retryFailed, listJobs, getJob, readVersions, rememberVersion };

@@ -1,9 +1,14 @@
 # Shared by install.sh and update.sh. The center prepends `export` lines for:
 #   NOW_UTC TZ_NAME PROXY CENTER_URL CENTER_HOST BUNDLE_URL BUNDLE_SHA256
 #   BUNDLE_VERSION SITE_CODE SITE_TITLE SITE_COMPANY API_KEY FORCE
+#   SUDO_PASS     the ssh password, for cameras where sudo asks for one
+#   NM_URL NM_SHA256   node_modules packed by the center for this firmware's
+#                      dependencies (empty when it has none yet)
 #
 # Lines starting with @@ are read by the center to drive the progress bar:
 #   @@STEP <n> <text>   @@VERSION <v>   @@OK   @@FAIL <reason>
+#   @@NEED_BUNDLE   the camera could not download the firmware itself -
+#                   the center pushes it over ssh and runs the job again
 set -u
 export APP="$HOME/Desktop/OCR-V8.1"
 export PATH="$HOME/.local/bin:$PATH"
@@ -15,8 +20,39 @@ info() { echo "  $*"; }
 warn() { echo "  ! $*"; }
 fail() { echo "@@FAIL $*"; exit 1; }
 
+# sudo, with or without a password. Most cameras let the user sudo freely;
+# where one does not, the ssh password is the sudo password, and it is fed
+# to sudo on stdin rather than stopping the update over it.
+SUDO_MODE=""
+sudo_init() {
+    if sudo -n true 2>/dev/null; then SUDO_MODE=nopass; return 0; fi
+    if [ -n "${SUDO_PASS:-}" ] && printf '%s\n' "$SUDO_PASS" | sudo -S -p '' true 2>/dev/null; then
+        SUDO_MODE=pass
+        return 0
+    fi
+    return 1
+}
+SUDO() {
+    if [ "$SUDO_MODE" = "pass" ]; then
+        printf '%s\n' "$SUDO_PASS" | sudo -S -p '' "$@"
+    else
+        sudo -n "$@"
+    fi
+}
+# write a root-owned file from stdin - sudo's stdin may be carrying the password
+sudo_write() {
+    local tmp
+    tmp=$(mktemp)
+    cat > "$tmp"
+    SUDO install -m 644 "$tmp" "$1"
+    local rc=$?
+    rm -f "$tmp"
+    return $rc
+}
 need_sudo() {
-    sudo -n true 2>/dev/null || fail "ผู้ใช้ $(whoami) ใช้ sudo โดยไม่ใส่รหัสไม่ได้ - ตั้ง NOPASSWD ก่อน"
+    sudo_init || fail "ผู้ใช้ $(whoami) ใช้ sudo ไม่ได้ ทั้งแบบไม่ใส่รหัสและด้วยรหัส ssh - ตรวจสิทธิ์ผู้ใช้บนกล้อง"
+    [ "$SUDO_MODE" = "pass" ] && info "sudo ต้องใส่รหัส - ใช้รหัส ssh ให้"
+    return 0
 }
 
 # CM4 has no RTC battery. A clock that came back from a power cut years in the
@@ -24,11 +60,11 @@ need_sudo() {
 # rejects every repository as "not yet valid" - nothing installs until the
 # date is right. The center's own clock is the one source we can trust here.
 set_time() {
-    sudo -n timedatectl set-ntp false >/dev/null 2>&1 || true
-    [ -n "${TZ_NAME:-}" ] && sudo -n timedatectl set-timezone "$TZ_NAME" >/dev/null 2>&1
-    sudo -n date -u -s "$NOW_UTC" >/dev/null 2>&1 || fail "ตั้งเวลาไม่ได้"
-    sudo -n hwclock -w >/dev/null 2>&1 || true
-    command -v fake-hwclock >/dev/null 2>&1 && sudo -n fake-hwclock save >/dev/null 2>&1
+    SUDO timedatectl set-ntp false >/dev/null 2>&1 || true
+    [ -n "${TZ_NAME:-}" ] && SUDO timedatectl set-timezone "$TZ_NAME" >/dev/null 2>&1
+    SUDO date -u -s "$NOW_UTC" >/dev/null 2>&1 || fail "ตั้งเวลาไม่ได้"
+    SUDO hwclock -w >/dev/null 2>&1 || true
+    command -v fake-hwclock >/dev/null 2>&1 && SUDO fake-hwclock save >/dev/null 2>&1
     ok "เวลาเครื่อง: $(date '+%Y-%m-%d %H:%M:%S %Z')"
 }
 
@@ -38,15 +74,15 @@ set_time() {
 set_proxy() {
     NOPROXY="localhost,127.0.0.1,::1,.local${CENTER_HOST:+,$CENTER_HOST}"
     if [ -z "${PROXY:-}" ]; then
-        sudo -n rm -f /etc/apt/apt.conf.d/95ocr-proxy /etc/profile.d/ocr-proxy.sh 2>/dev/null
+        SUDO rm -f /etc/apt/apt.conf.d/95ocr-proxy /etc/profile.d/ocr-proxy.sh 2>/dev/null
         info "ไม่ใช้ proxy (ออกเน็ตตรง)"
         return 0
     fi
-    sudo -n tee /etc/apt/apt.conf.d/95ocr-proxy >/dev/null <<EOF
+    sudo_write /etc/apt/apt.conf.d/95ocr-proxy <<EOF
 Acquire::http::Proxy "$PROXY";
 Acquire::https::Proxy "$PROXY";
 EOF
-    sudo -n tee /etc/profile.d/ocr-proxy.sh >/dev/null <<EOF
+    sudo_write /etc/profile.d/ocr-proxy.sh <<EOF
 export http_proxy="$PROXY"
 export https_proxy="$PROXY"
 export HTTP_PROXY="$PROXY"
@@ -66,13 +102,98 @@ no_proxy_env() {
     unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY
 }
 
+bundle_ok() {
+    [ -f /tmp/ocr-fw.tgz ] && [ "$(sha256sum /tmp/ocr-fw.tgz | cut -d' ' -f1)" = "$BUNDLE_SHA256" ]
+}
+
+# The camera downloads the firmware from the center. Where a firewall stops
+# that, the center pushes the same file over ssh and runs the job again -
+# so a file already in place with the right checksum is used as it is.
 fetch_bundle() {
+    if bundle_ok; then
+        ok "ได้ไฟล์ $BUNDLE_VERSION ทาง ssh ($(du -h /tmp/ocr-fw.tgz | cut -f1)) ตรวจ sha256 แล้ว"
+        return 0
+    fi
     rm -f /tmp/ocr-fw.tgz
-    curl -fsS --noproxy '*' -m 900 -o /tmp/ocr-fw.tgz "$BUNDLE_URL" \
-        || fail "ดึงไฟล์เฟิร์มแวร์จาก center ไม่ได้ - กล้องต่อ $CENTER_URL ไม่ถึง?"
-    GOT=$(sha256sum /tmp/ocr-fw.tgz | cut -d' ' -f1)
-    [ "$GOT" = "$BUNDLE_SHA256" ] || fail "ไฟล์เฟิร์มแวร์ที่ได้ไม่ครบ (sha256 ไม่ตรง)"
+    if ! curl -fsS --noproxy '*' -m 900 -o /tmp/ocr-fw.tgz "$BUNDLE_URL"; then
+        rm -f /tmp/ocr-fw.tgz
+        echo "@@NEED_BUNDLE"
+        fail "กล้องดึงไฟล์จาก $CENTER_URL เองไม่ได้ - center จะส่งให้ทาง ssh แทน"
+    fi
+    bundle_ok || { rm -f /tmp/ocr-fw.tgz; fail "ไฟล์เฟิร์มแวร์ที่ได้ไม่ครบ (sha256 ไม่ตรง)"; }
     ok "ได้ไฟล์ $BUNDLE_VERSION ($(du -h /tmp/ocr-fw.tgz | cut -f1)) ตรวจ sha256 แล้ว"
+}
+
+free_mb() { df -Pm "$HOME" | awk 'NR==2 {print $4}'; }
+
+# Make room without touching anything that matters: logs are truncated (not
+# deleted - pm2 holds them open, and a deleted open file frees nothing),
+# package caches and leftovers from earlier updates go. Images, config and
+# the program are never part of it.
+free_space() {
+    local before after
+    before=$(free_mb)
+    for f in "$HOME"/.pm2/logs/*.log "$APP"/logs/*.log; do
+        [ -f "$f" ] && [ "$(stat -c %s "$f" 2>/dev/null || echo 0)" -gt 5242880 ] && : > "$f"
+    done
+    find "$HOME/.pm2/logs" -name '*.gz' -mtime +7 -delete 2>/dev/null
+    SUDO journalctl --vacuum-size=50M >/dev/null 2>&1 || true
+    SUDO apt-get clean >/dev/null 2>&1 || true
+    rm -rf "$HOME/.npm/_cacache" "$HOME/.cache/pip" 2>/dev/null
+    rm -f "$HOME"/ocr-backups/*.tgz 2>/dev/null
+    rm -rf /tmp/ocr-fw-stage /tmp/ocr-nm.tgz 2>/dev/null
+    find /tmp -maxdepth 1 -name 'ocr-*' -mmin +60 -exec rm -rf {} + 2>/dev/null
+    after=$(free_mb)
+    info "ล้างไฟล์ที่ไม่จำเป็น คืนพื้นที่ $((after - before)) MB (เหลือ ${after} MB)"
+}
+
+# The OCR program will not come up without redis; a camera whose redis
+# stopped looks like a broken update when it is not.
+ensure_redis() {
+    command -v redis-cli >/dev/null 2>&1 || return 0
+    [ "$(redis-cli ping 2>/dev/null)" = "PONG" ] && return 0
+    warn "redis ไม่ตอบ - สั่งให้ทำงาน"
+    SUDO systemctl enable --now redis-server >/dev/null 2>&1 || SUDO systemctl restart redis-server >/dev/null 2>&1
+    sleep 2
+    [ "$(redis-cli ping 2>/dev/null)" = "PONG" ] && ok "redis กลับมาแล้ว" || warn "redis ยังไม่ตอบ"
+}
+
+# node_modules packed by the center from a camera that already runs this
+# firmware - the way to new libraries on a subnet npm cannot reach.
+# Replaces node_modules only once the new set is unpacked and checked.
+use_nm_cache() {
+    [ -n "${NM_URL:-}" ] || return 1
+    info "ใช้ไลบรารีชุดสำเร็จรูปจาก center (ไม่ต้องออกเน็ต)"
+    rm -f /tmp/ocr-nm.tgz
+    curl -fsS --noproxy '*' -m 900 -o /tmp/ocr-nm.tgz "$NM_URL" || { warn "ดึงชุดไลบรารีจาก center ไม่ได้"; return 1; }
+    [ "$(sha256sum /tmp/ocr-nm.tgz | cut -d' ' -f1)" = "${NM_SHA256:-}" ] || { warn "ชุดไลบรารีที่ได้ไม่ครบ"; rm -f /tmp/ocr-nm.tgz; return 1; }
+    rm -rf "$APP/node_modules.new" && mkdir -p "$APP/node_modules.new"
+    if ! tar -xzf /tmp/ocr-nm.tgz -C "$APP/node_modules.new" --strip-components=1; then
+        rm -rf "$APP/node_modules.new" /tmp/ocr-nm.tgz
+        warn "แตกชุดไลบรารีไม่สำเร็จ"
+        return 1
+    fi
+    rm -f /tmp/ocr-nm.tgz
+    [ -x "$APP/node_modules.new/.bin/babel-node" ] || [ -f "$APP/node_modules.new/@babel/node/package.json" ] \
+        || { rm -rf "$APP/node_modules.new"; warn "ชุดไลบรารีไม่ครบ (ไม่มี babel-node)"; return 1; }
+    # the previous set stays as node_modules.old until the new version is up:
+    # a rollback puts it back, success deletes it
+    rm -rf "$APP/node_modules.old"
+    [ -d "$APP/node_modules" ] && mv "$APP/node_modules" "$APP/node_modules.old"
+    mv "$APP/node_modules.new" "$APP/node_modules"
+    ok "ติดตั้งไลบรารีจาก center แล้ว"
+    return 0
+}
+
+# What the program said before it died - so a failed update explains itself
+diagnose() {
+    echo "  ---- วินิจฉัย ----"
+    echo "  ดิสก์ว่าง: $(free_mb) MB / redis: $(redis-cli ping 2>/dev/null || echo ไม่ตอบ)"
+    ss -tlnp 2>/dev/null | grep -q ':64010 ' && echo "  พอร์ต 64010: มีโปรแกรมฟังอยู่" || echo "  พอร์ต 64010: ไม่มีใครฟัง"
+    if [ -n "${PM2_NAME:-}" ]; then
+        pm2_run logs "$PM2_NAME" --nostream --lines 20 --err 2>/dev/null | tail -n 20 | sed 's/^/  | /'
+    fi
+    echo "  -----------------"
 }
 
 find_node() {

@@ -6,7 +6,8 @@ step "1/12 ตรวจเครื่อง"
 need_sudo
 ARCH=$(uname -m)
 [ "$ARCH" = "aarch64" ] || fail "เครื่องนี้เป็น $ARCH - โปรแกรมกล้องรองรับเฉพาะ aarch64 (CM4)"
-FREE=$(df -Pm "$HOME" | awk 'NR==2 {print $4}')
+FREE=$(free_mb)
+if [ "${FREE:-0}" -lt 1800 ]; then free_space; FREE=$(free_mb); fi
 [ "${FREE:-0}" -gt 1500 ] || fail "พื้นที่ว่างเหลือ ${FREE} MB - ต้องมีอย่างน้อย 1.5 GB"
 # never install over a camera that already has the program - wherever it
 # lives and whatever pm2 calls it. The one exception is an install from the
@@ -61,9 +62,9 @@ fi
 ok "node $("$NODE" -v) / npm $(npm -v 2>/dev/null)"
 
 step "7/12 แพ็กเกจระบบ (redis, avahi)"
-sudo -n apt-get update -qq || fail "apt update ไม่ผ่าน - proxy ถูกไหม? เวลาตรงไหม?"
-sudo -n apt-get install -y -qq redis-server avahi-daemon avahi-utils curl >/dev/null || fail "apt install ไม่ผ่าน"
-sudo -n systemctl enable --now redis-server >/dev/null 2>&1
+SUDO apt-get update -qq || fail "apt update ไม่ผ่าน - proxy ถูกไหม? เวลาตรงไหม?"
+SUDO apt-get install -y -qq redis-server avahi-daemon avahi-utils curl >/dev/null || fail "apt install ไม่ผ่าน"
+SUDO systemctl enable --now redis-server >/dev/null 2>&1
 [ "$(redis-cli ping 2>/dev/null)" = "PONG" ] && ok "redis ตอบ PONG" || fail "redis ไม่ตอบ"
 
 step "8/12 ไลบรารี Python"
@@ -97,7 +98,13 @@ print('  ✓ ไซต์', cfg['site']['code'], '/ ส่งข้อมูล�
 PY
 
 step "10/12 ติดตั้งไลบรารี Node (ใช้เวลาหลายนาที)"
-npm install --no-audit --no-fund --legacy-peer-deps --loglevel=error || fail "npm install ไม่ผ่าน - proxy ถูกไหม?"
+# the center's packed set first - a new camera on a subnet without internet
+# still gets its libraries; npm only when the center has none for this build
+if ! use_nm_cache; then
+    npm install --no-audit --no-fund --legacy-peer-deps --loglevel=error \
+        || fail "npm install ไม่ผ่าน และ center ยังไม่มีชุดไลบรารีของเวอร์ชันนี้ - ตั้ง proxy ให้วงนี้ หรืออัปเดตกล้องสักตัวที่ออกเน็ตได้ก่อน (center จะเก็บไลบรารีจากตัวนั้น)"
+fi
+rm -rf "$APP/node_modules.old"
 chmod -R +x node_modules/.bin 2>/dev/null || true
 ok "node_modules พร้อม"
 
@@ -111,13 +118,13 @@ pm2_run start ecosystem.config.js >/dev/null || fail "pm2 start ไม่ผ่�
 pm2_run install pm2-logrotate >/dev/null 2>&1 || warn "ติดตั้ง pm2-logrotate ไม่ได้ (log อาจโตเรื่อย ๆ)"
 pm2_run set pm2-logrotate:max_size 20M >/dev/null 2>&1 || true
 pm2_run set pm2-logrotate:retain 5 >/dev/null 2>&1 || true
-sudo -n env PATH="$PATH" "$NODE" "$PM2_JS" startup systemd -u "$(whoami)" --hp "$HOME" >/dev/null 2>&1 \
+SUDO env PATH="$PATH" "$NODE" "$PM2_JS" startup systemd -u "$(whoami)" --hp "$HOME" >/dev/null 2>&1 \
     || warn "ตั้ง pm2 startup ไม่สำเร็จ"
 pm2_run save --force >/dev/null 2>&1
 systemctl is-enabled "pm2-$(whoami)" >/dev/null 2>&1 && ok "ขึ้นเองตอนบูต (pm2-$(whoami))" || warn "ยังไม่ได้ตั้งขึ้นเองตอนบูต"
 
-sudo -n install -d /etc/avahi/services
-sudo -n tee /etc/avahi/services/ocr-display.service >/dev/null <<'XML'
+SUDO install -d /etc/avahi/services
+sudo_write /etc/avahi/services/ocr-display.service <<'XML'
 <?xml version="1.0" standalone='no'?>
 <!DOCTYPE service-group SYSTEM "avahi-service.dtd">
 <service-group>
@@ -129,8 +136,8 @@ sudo -n tee /etc/avahi/services/ocr-display.service >/dev/null <<'XML'
   </service>
 </service-group>
 XML
-sudo -n systemctl enable --now avahi-daemon >/dev/null 2>&1
-sudo -n systemctl restart avahi-daemon >/dev/null 2>&1
+SUDO systemctl enable --now avahi-daemon >/dev/null 2>&1
+SUDO systemctl restart avahi-daemon >/dev/null 2>&1
 ok "ประกาศตัวบนเครือข่าย: OCR-Display ($(hostname))"
 
 step "12/12 ตรวจผล"

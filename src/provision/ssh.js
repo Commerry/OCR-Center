@@ -136,6 +136,72 @@ const runScript = (host, script, { onLine, timeoutMs = 120000, connectTimeout } 
     child.stdin.end(script);
   });
 
+/** ssh with the same login handling as runScript, for streaming files. */
+const spawnSsh = (host, remoteCommand, { connectTimeout } = {}) => {
+  const s = settings.load();
+  const args = sshArgs(host, { ...s.ssh, connectTimeout });
+  args[args.length - 1] = remoteCommand; // in place of 'bash -s'
+  return spawn('ssh', args, {
+    env: {
+      ...process.env,
+      SSH_ASKPASS: ensureAskpass(),
+      SSH_ASKPASS_REQUIRE: 'force',
+      DISPLAY: process.env.DISPLAY || ':0',
+      OCR_SSH_PASS: s.ssh.password || '',
+    },
+    detached: !IS_WINDOWS,
+    windowsHide: true,
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+};
+
+const killTree = (child) => {
+  try {
+    if (IS_WINDOWS) child.kill('SIGKILL');
+    else process.kill(-child.pid, 'SIGKILL');
+  } catch (e) { /* already gone */ }
+};
+
+/**
+ * Copy a local file to the camera over ssh. The fallback for a camera that
+ * cannot open the center's web port: ssh already reaches it, so the file
+ * goes the same way the commands do.
+ */
+const pushFile = (host, localPath, remotePath, { timeoutMs = 20 * 60 * 1000 } = {}) => new Promise((resolve) => {
+  const child = spawnSsh(host, `cat > ${shq(remotePath)}.part && mv ${shq(remotePath)}.part ${shq(remotePath)}`);
+  let err = '';
+  child.stderr.on('data', (c) => { err += c; });
+  const timer = setTimeout(() => killTree(child), timeoutMs);
+  child.on('close', (code) => {
+    clearTimeout(timer);
+    resolve({ ok: code === 0, code, error: err.trim().split('\n').pop() || '' });
+  });
+  child.on('error', (e) => { clearTimeout(timer); resolve({ ok: false, code: -1, error: e.message }); });
+  child.stdin.on('error', () => {});
+  fs.createReadStream(localPath).pipe(child.stdin);
+});
+
+/**
+ * Run `script` on the camera and save its raw stdout to `localPath` - for
+ * pulling a tarball back. Only the script's stdout is kept; it must not print
+ * anything else there.
+ */
+const pullToFile = (host, script, localPath, { timeoutMs = 20 * 60 * 1000 } = {}) => new Promise((resolve) => {
+  const child = spawnSsh(host, 'bash -s');
+  const out = fs.createWriteStream(localPath);
+  let err = '';
+  child.stdout.pipe(out);
+  child.stderr.on('data', (c) => { err += c; });
+  const timer = setTimeout(() => killTree(child), timeoutMs);
+  child.on('close', (code) => {
+    clearTimeout(timer);
+    out.end(() => resolve({ ok: code === 0, code, error: err.trim().split('\n').pop() || '' }));
+  });
+  child.on('error', (e) => { clearTimeout(timer); resolve({ ok: false, code: -1, error: e.message }); });
+  child.stdin.on('error', () => {});
+  child.stdin.end(script);
+});
+
 /** Single-quote a value for bash: the only character that needs care is ' itself. */
 const shq = (value) => `'${String(value === undefined || value === null ? '' : value).replace(/'/g, `'\\''`)}'`;
 
@@ -144,4 +210,4 @@ const exportsFor = (vars) => Object.entries(vars)
   .map(([k, v]) => `export ${k}=${shq(v)}`)
   .join('\n');
 
-module.exports = { runScript, shq, exportsFor };
+module.exports = { runScript, pushFile, pullToFile, shq, exportsFor };
