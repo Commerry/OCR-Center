@@ -123,6 +123,10 @@
     .btn.grad:hover { filter: brightness(1.12); }
 
     .refresh-note { font-size: .64rem; color: var(--text-3); white-space: nowrap; }
+    .build-foot {
+      text-align: center; font-family: var(--font-mono); font-size: .62rem;
+      color: var(--text-3); padding: 1.2rem 1rem 1.6rem; user-select: text;
+    }
 
     /* narrower screens: labels fold away and the buttons become icons -
        every one keeps a title, so hovering still says what it does */
@@ -623,6 +627,8 @@
   </div>
 
 
+  <footer class="build-foot" id="buildFoot"></footer>
+
   <!-- ===== Settings & camera tools ===== -->
   <div class="overlay" id="setOverlay">
     <div class="panel set-panel">
@@ -701,8 +707,9 @@
           </div>
           <div class="set-note">
             <b>สิ่งที่ไม่ถูกแตะ:</b> config.json (กรอบ crop, IP PLC, โฟกัส, โมเดล, ชื่อไซต์, URL center), .env, ผู้ใช้, รูป, log<br>
-            <b>ก่อนอัปเดต:</b> สำรองโปรแกรมเดิมไว้ที่ ~/ocr-backups บนกล้อง และเช็คว่า config.json ไม่เปลี่ยนแม้แต่ไบต์เดียว<br>
-            <b>ถ้าเวอร์ชันใหม่ไม่ขึ้นใน 90 วินาที</b> กล้องถอยกลับเวอร์ชันเดิมเอง
+            <b>สำรองบนกล้อง:</b> แค่ config.json + ชื่อไซต์ ไว้ที่ ~/ocr-backups (ไม่กี่ KB) — ไม่สำรองโปรแกรมทั้งก้อน ดิสก์กล้องไม่เต็ม<br>
+            <b>ถ้าเวอร์ชันใหม่ไม่ขึ้นใน 90 วินาที</b> ถอยกลับเอง (เก็บเฉพาะไฟล์ที่ถูกเปลี่ยนไว้ชั่วคราวระหว่างอัปเดต ลบทิ้งทันทีเมื่อสำเร็จ)<br>
+            <b>อัปเดตสำเร็จจริง</b> = ช่อง "ไฟล์บนกล้อง" และ "กำลังรัน" ตรงกับเวอร์ชันที่เลือกทั้งคู่ (กดตรวจซ้ำหลังอัปเดตเสร็จ ~1 นาที)
           </div>
           <div class="set-actions">
             <button class="btn" onclick="selectOutdated()">เลือกตัวที่ยังเป็นรุ่นเก่า</button>
@@ -784,6 +791,13 @@
     const collapsed = new Set(JSON.parse(localStorage.getItem('ocrc-collapsed') || '[]'));
 
     const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    // the commit a camera reports from its running program; a bare "1.0.0" is
+    // what cameras sent before they reported their build at all
+    const fwShort = (v) => {
+      if (!v) return '-';
+      const m = String(v).match(/([0-9a-f]{7})$/);
+      return m ? m[1] : 'รุ่นเก่า';
+    };
     const fmtAgo = (sec) => sec < 60 ? sec + 's ago' : sec < 3600 ? Math.floor(sec/60) + 'm ago' : Math.floor(sec/3600) + 'h ago';
     const fmtTime = (iso) => iso ? new Date(iso).toLocaleString('th-TH', { hour12: false }) : '-';
     const meterCls = (v, warn, crit) => v >= crit ? 'crit' : v >= warn ? 'warn' : '';
@@ -824,7 +838,7 @@
           <div class="dot ${d.online ? 'on' : 'off'}"></div>
           <div style="min-width:0">
             <div class="card-title">${esc(name)}</div>
-            <div class="card-sub">${esc(d.hostname || '')} &middot; ${esc(d.ip || '?')}</div>
+            <div class="card-sub">${esc(d.hostname || '')} &middot; ${esc(d.ip || '?')} &middot; <span title="เฟิร์มแวร์ที่กล้องกำลังรัน: ${esc(d.appVersion || '-')}">fw ${esc(fwShort(d.appVersion))}</span></div>
           </div>
           <div class="seen">${fmtAgo(d.lastSeenSec)}</div>
           ${d.webUrl ? `<a class="gbtn" href="${esc(d.webUrl)}" target="_blank" rel="noopener"
@@ -1207,7 +1221,7 @@
       document.getElementById('dDot').className = 'dot ' + (d.online ? 'on' : 'off');
       document.getElementById('dTitle').textContent = cam.display_name || d.hostname || d.deviceId;
       document.getElementById('dSub').textContent =
-        `${groupName} · ${d.hostname || ''} · ${d.ip || '?'} · ${d.mac || ''} · v${d.appVersion || '?'} · last seen ${fmtAgo(d.lastSeenSec)}`;
+        `${groupName} · ${d.hostname || ''} · ${d.ip || '?'} · ${d.mac || ''} · เฟิร์มแวร์ ${d.appVersion || '?'} · last seen ${fmtAgo(d.lastSeenSec)}`;
 
       const openWeb = document.getElementById('dOpenWeb');
       if (d.webUrl) {
@@ -1412,6 +1426,14 @@
           document.getElementById('siteName').textContent = s.settings.siteName;
           document.getElementById('siteSubtitle').textContent = s.settings.siteSubtitle;
           document.title = s.settings.siteName;
+        }
+        if (s.build) {
+          const when = s.build.commitDate ? new Date(s.build.commitDate).toLocaleString('th-TH', { dateStyle: 'medium', timeStyle: 'short' }) : '';
+          const foot = document.getElementById('buildFoot');
+          foot.textContent = 'OCR Center ' + s.build.label + (when ? ' · โค้ดวันที่ ' + when : '');
+          foot.title = 'เวอร์ชันของ center ที่กำลังรัน (* = มีไฟล์ที่แก้ในเครื่องนี้หลัง git pull)';
+          const sub = document.querySelector('#setOverlay .panel-sub');
+          if (sub) sub.textContent += ' · center ' + s.build.label;
         }
         const ls = await (await fetch('/api/login-status')).json();
         if (ls.loginEnabled) document.getElementById('logoutBtn').style.display = '';
@@ -1648,12 +1670,35 @@
     }
 
     // "20261015-a1b2c3d" or "git-20260929-2d7f5c2" -> compare by commit hash
+    const shaOf = (v) => (String(v || '').match(/([0-9a-f]{7})$/) || [])[1] || null;
+
     function versionState(current, bundle) {
       if (!current || current === 'unknown') return ['muted', 'ไม่ทราบ'];
       if (!bundle) return ['muted', '-'];
-      const sha = (current.match(/([0-9a-f]{7})$/) || [])[1];
+      const sha = shaOf(current);
       if (sha && sha === bundle.sha.slice(0, 7)) return ['ok', 'ล่าสุดแล้ว'];
       return ['old', 'ต่างจากที่เลือก'];
+    }
+
+    /*
+     * Two versions per camera, and only both together say an update worked:
+     *   on disk  - read by the scan from the program folder
+     *   running  - what the program reported in its last heartbeat; it reads
+     *              its version once, when it starts, so this changes only
+     *              after the camera has really been restarted onto the update
+     */
+    function updateState(r, bundle) {
+      const p = r.probe || {};
+      const running = r.known && r.known.running;
+      if (!bundle) return ['muted', '-'];
+      const want = bundle.sha.slice(0, 7);
+      const disk = shaOf(p.version);
+      const live = shaOf(running);
+      if (disk !== want) return ['old', 'ต้องอัปเดต'];
+      if (live === want) return ['ok', 'ล่าสุด กำลังรันแล้ว'];
+      if (!running) return ['installed', 'ไฟล์ใหม่แล้ว ยังไม่เห็น heartbeat'];
+      if (!live) return ['installed', 'ไฟล์ใหม่แล้ว รอกล้องรายงานเวอร์ชัน'];
+      return ['installed', 'ไฟล์ใหม่แล้ว แต่ยังรันตัวเก่า'];
     }
 
     function updatable() {
@@ -1671,7 +1716,8 @@
       }
       const rows = list.map((r) => {
         const p = r.probe || {};
-        const [cls, text] = versionState(p.version, bundle);
+        const [cls, text] = updateState(r, bundle);
+        const running = r.known && r.known.running;
         const checked = prov.sel.update.has(r.ip);
         return '<tr class="click' + (checked ? ' sel' : '') + '" onclick="toggleSel(\'update\',\'' + r.ip + '\')">' +
           '<td><input type="checkbox" ' + (checked ? 'checked ' : '') + 'onclick="event.stopPropagation();toggleSel(\'update\',\'' + r.ip + '\')"></td>' +
@@ -1681,12 +1727,15 @@
             (p.pm2_name ? ' · pm2: ' + esc(p.pm2_name) : ' · ไม่ได้รันผ่าน pm2') + '</div></td>' +
           '<td>' + esc(p.site || '-') + '</td>' +
           '<td>' + esc(p.version || '-') + '</td>' +
+          '<td>' + esc(running || '-') + '</td>' +
           '<td><span class="tag ' + cls + '">' + text + '</span></td>' +
           '<td>' + esc(p.pm2 || '-') + ' / ' + esc(p.web || '-') + '</td>' +
-          '<td>' + statusTag(r) + '</td>' +
         '</tr>';
       }).join('');
-      box.innerHTML = '<table><thead><tr><th></th><th>IP</th><th>ชื่อเครื่อง</th><th>ไซต์</th><th>เวอร์ชันบนกล้อง</th><th>เทียบ</th><th>pm2 / เว็บ</th><th>สถานะ</th></tr></thead><tbody>' + rows + '</tbody></table>';
+      box.innerHTML = '<table><thead><tr><th></th><th>IP</th><th>ชื่อเครื่อง</th><th>ไซต์</th>' +
+        '<th title="อ่านจากโฟลเดอร์โปรแกรมบนกล้อง">ไฟล์บนกล้อง</th>' +
+        '<th title="ที่โปรแกรมกำลังรันรายงานมาใน heartbeat ล่าสุด">กำลังรัน</th>' +
+        '<th>ผล</th><th>pm2 / เว็บ</th></tr></thead><tbody>' + rows + '</tbody></table>';
       updateUpdateButton();
     }
 
@@ -1698,8 +1747,10 @@
 
     function selectOutdated() {
       const bundle = bundleFor('updBundle');
+      // anything not both on disk and running the selected build - an update
+      // with nothing to copy still restarts the camera onto its files
       prov.sel.update = new Set(updatable()
-        .filter((r) => versionState((r.probe || {}).version, bundle)[0] !== 'ok')
+        .filter((r) => updateState(r, bundle)[0] !== 'ok')
         .map((r) => r.ip));
       renderUpdateTable();
     }

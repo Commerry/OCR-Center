@@ -185,7 +185,15 @@ const knownDevices = () => {
 const classify = (item, byMac) => {
   const known = item.mac ? byMac.get(item.mac) : null;
   if (known) {
-    item.known = { deviceId: known.device_id, hostname: known.hostname, ip: known.ip };
+    item.known = {
+      deviceId: known.device_id,
+      hostname: known.hostname,
+      ip: known.ip,
+      // what the running program reported in its last heartbeat - set when
+      // it started, so it changes only once an update has been restarted into
+      running: known.app_version || null,
+      lastSeen: known.last_seen || null,
+    };
   }
   const p = item.probe || {};
   if (!item.ssh) item.status = 'unreachable';

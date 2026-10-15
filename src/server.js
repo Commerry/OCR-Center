@@ -5,6 +5,7 @@ const ingestRoutes = require('./routes/ingest');
 const apiRoutes = require('./routes/api');
 const { prune } = require('./db');
 const auth = require('./auth');
+const build = require('./version');
 
 const app = express();
 app.use(express.json({ limit: '10mb' })); // heartbeats can carry webp thumbnails
@@ -26,11 +27,14 @@ app.get('/api/settings', (req, res) => res.json({
     siteName: process.env.SITE_NAME || 'OCR CENTER',
     siteSubtitle: process.env.SITE_SUBTITLE || 'STA-SK Fleet Monitor',
   },
+  // shown at the foot of the dashboard: which build is serving this page
+  build: { version: build.version, commit: build.commit, commitDate: build.commitDate, label: build.label },
 }));
 
 // Version probe - public on purpose: it is how you check which build a machine
-// is really running without logging in.
-const startedAt = new Date();
+// is really running without logging in. `commit` is the one to compare with
+// `git log -1` / GitHub; it is read at start-up, so a pull without a restart
+// still shows the old one.
 app.get('/api/health', (req, res) => {
   // eslint-disable-next-line global-require
   const clock = require('./timeGuard').check();
@@ -38,9 +42,12 @@ app.get('/api/health', (req, res) => {
     ok: true,
     clockTrusted: clock.trusted,
     clockBehindHours: clock.trusted ? 0 : +(clock.behindMs / 3600000).toFixed(1),
-    version: require('../package.json').version,
+    version: build.version,
+    commit: build.commit,
+    commitDate: build.commitDate,
+    localEdits: build.dirty,
     node: process.version,
-    startedAt: startedAt.toISOString(),
+    startedAt: build.startedAt,
     uptimeSec: Math.round(process.uptime()),
     now: new Date().toISOString(),
   });
