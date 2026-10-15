@@ -36,19 +36,39 @@ warn() { printf '  \033[33m[!]\033[0m    %s\n' "$*"; }
 die()  { printf '  \033[31m[หยุด]\033[0m %s\n' "$*" >&2; exit 1; }
 
 # จำนวนแถวในตารางหลัก อ่านผ่าน node เพราะเครื่องนี้ไม่มีคำสั่ง sqlite3
+COUNT_ERROR=""
 counts() {
     node -e '
-      const path = require("path");
       try {
+        const path = require("path");
         const Database = require("better-sqlite3");
         const db = new Database(path.join(process.cwd(), "data", "center.db"), { readonly: true });
-        const n = (t) => db.prepare(`SELECT COUNT(*) AS n FROM ${t}`).get().n;
+        const n = (t) => db.prepare("SELECT COUNT(*) AS n FROM " + t).get().n;
         console.log([n("devices"), n("cameras"), n("groups"), n("reads"), n("read_images")].join(" "));
-      } catch (e) { console.log("- - - - -"); }
-    ' 2>/dev/null
+      } catch (e) {
+        console.error(e.message);
+        console.log("- - - - -");
+      }
+    ' 2>/tmp/ocr-counts-error
 }
 
-read_counts() { read -r DEVICES CAMERAS GROUPS READS IMAGES <<< "$(counts)"; }
+# แยกค่าออกมาแบบไม่ง้อว่าได้มากี่ช่อง - ถ้า node พังหรือคืนค่าว่าง ทุกตัวเป็น "-"
+# ไม่ใช่ตัวแปรที่ไม่มีค่า ซึ่งจะทำให้สคริปต์ตายกลางทางพร้อม set -u
+read_counts() {
+    local out
+    out="$(counts || true)"
+    COUNT_ERROR="$(cat /tmp/ocr-counts-error 2>/dev/null || true)"
+    # shellcheck disable=SC2086
+    set -- $out
+    # GROUP_N ไม่ใช่ GROUPS เพราะ GROUPS เป็นตัวแปรพิเศษของ bash เอง
+    # (เก็บ group id ของผู้ใช้) เขียนทับไม่ได้ และทำให้ read หยุดกลางคัน
+    DEVICES="${1:--}"; CAMERAS="${2:--}"; GROUP_N="${3:--}"
+    READS="${4:--}"; IMAGES="${5:--}"
+}
+
+# เทียบตัวเลขแบบปลอดภัย: "-" แปลว่าอ่านไม่ได้ ไม่ใช่ว่าข้อมูลหาย
+same() { [ "$1" = "$2" ]; }
+is_num() { case "${1:-}" in (''|*[!0-9]*) return 1 ;; (*) return 0 ;; esac; }
 
 say "1. สภาพตอนนี้"
 command -v git >/dev/null || die "ไม่มี git"
@@ -59,8 +79,12 @@ CURRENT="$(git rev-parse --short HEAD)"
 VERSION="$(node -p "require('./package.json').version" 2>/dev/null || echo '?')"
 echo "  เวอร์ชัน : $VERSION ($CURRENT)"
 read_counts
-echo "  ข้อมูล   : อุปกรณ์ $DEVICES / กล้อง $CAMERAS / กลุ่ม $GROUPS / การอ่าน $READS / รูป $IMAGES"
-BEFORE_DEVICES="$DEVICES"; BEFORE_CAMERAS="$CAMERAS"; BEFORE_GROUPS="$GROUPS"; BEFORE_READS="$READS"
+echo "  ข้อมูล   : อุปกรณ์ $DEVICES / กล้อง $CAMERAS / กลุ่ม $GROUP_N / การอ่าน $READS / รูป $IMAGES"
+if [ "$DEVICES" = "-" ]; then
+    warn "อ่านจำนวนแถวจากฐานข้อมูลไม่ได้${COUNT_ERROR:+ ($COUNT_ERROR)}"
+    warn "อัปเดตต่อได้ แต่จะเทียบจำนวนก่อน/หลังให้ไม่ได้"
+fi
+BEFORE_DEVICES="$DEVICES"; BEFORE_CAMERAS="$CAMERAS"; BEFORE_GROUP_N="$GROUP_N"; BEFORE_READS="$READS"
 
 DIRTY="$(git status --porcelain 2>/dev/null | grep -v '^??' || true)"
 if [ -n "$DIRTY" ]; then
@@ -150,18 +174,24 @@ else
 fi
 
 read_counts
-echo "  ข้อมูลหลังอัปเดต: อุปกรณ์ $DEVICES / กล้อง $CAMERAS / กลุ่ม $GROUPS / การอ่าน $READS / รูป $IMAGES"
-LOST=0
-[ "$DEVICES" = "$BEFORE_DEVICES" ] || { warn "จำนวนอุปกรณ์เปลี่ยน $BEFORE_DEVICES -> $DEVICES"; LOST=1; }
-[ "$CAMERAS" = "$BEFORE_CAMERAS" ] || { warn "จำนวนกล้องเปลี่ยน $BEFORE_CAMERAS -> $CAMERAS"; LOST=1; }
-[ "$GROUPS"  = "$BEFORE_GROUPS"  ] || { warn "จำนวนกลุ่มเปลี่ยน $BEFORE_GROUPS -> $GROUPS"; LOST=1; }
-if [ "$LOST" = "0" ]; then
-    ok "รายการอุปกรณ์/กล้อง/กลุ่ม ครบเท่าเดิมทุกรายการ"
+echo "  ข้อมูลหลังอัปเดต: อุปกรณ์ $DEVICES / กล้อง $CAMERAS / กลุ่ม $GROUP_N / การอ่าน $READS / รูป $IMAGES"
+if [ "$DEVICES" = "-" ] || [ "$BEFORE_DEVICES" = "-" ]; then
+    warn "เทียบจำนวนไม่ได้ (อ่านฐานข้อมูลไม่สำเร็จ) - ตรวจด้วยตาที่หน้าเว็บแทน"
 else
-    warn "ตัวเลขไม่ตรง - กู้คืนได้จาก backups/ ตามคำสั่งในข้อ 3"
+    LOST=0
+    same "$DEVICES" "$BEFORE_DEVICES" || { warn "จำนวนอุปกรณ์เปลี่ยน $BEFORE_DEVICES -> $DEVICES"; LOST=1; }
+    same "$CAMERAS" "$BEFORE_CAMERAS" || { warn "จำนวนกล้องเปลี่ยน $BEFORE_CAMERAS -> $CAMERAS"; LOST=1; }
+    same "$GROUP_N"  "$BEFORE_GROUP_N"  || { warn "จำนวนกลุ่มเปลี่ยน $BEFORE_GROUP_N -> $GROUP_N"; LOST=1; }
+    if [ "$LOST" = "0" ]; then
+        ok "รายการอุปกรณ์/กล้อง/กลุ่ม ครบเท่าเดิมทุกรายการ"
+    else
+        warn "ตัวเลขไม่ตรง - กู้คืนได้จาก backups/ ตามคำสั่งในข้อ 3"
+    fi
+    # การอ่านเพิ่มขึ้นได้ระหว่างอัปเดต เพราะกล้องยังส่งเข้ามาตลอด - ลดลงเท่านั้นที่ผิด
+    if is_num "$READS" && is_num "$BEFORE_READS" && [ "$READS" -lt "$BEFORE_READS" ]; then
+        warn "จำนวนการอ่านลดลง $BEFORE_READS -> $READS"
+    fi
 fi
-# การอ่านเพิ่มขึ้นได้ระหว่างอัปเดต เพราะกล้องยังส่งเข้ามาตลอด - ลดลงเท่านั้นที่ผิด
-[ "$READS" -lt "$BEFORE_READS" ] 2>/dev/null && warn "จำนวนการอ่านลดลง $BEFORE_READS -> $READS" || true
 
 say "เสร็จ"
 echo "  เวอร์ชัน: $(node -p "require('./package.json').version" 2>/dev/null) ($NEW)"
