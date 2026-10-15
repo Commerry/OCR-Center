@@ -1,0 +1,4 @@
+# Shell scripts run on Linux. Windows checkouts must not turn these into
+# CRLF: bash reads the carriage return as part of the command and every line
+# fails with "$'\r': command not found".
+*.sh text eol=lf
