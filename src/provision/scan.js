@@ -23,7 +23,10 @@ const settings = require('./settings');
  * program reports itself by MAC, so this is the same key the dashboard uses.
  */
 
-const PROBE_SCRIPT = fs.readFileSync(path.join(__dirname, 'remote', 'probe.sh'), 'utf8').replace(/\r/g, '');
+// probe.sh leans on common.sh to find the program wherever it was installed
+const PROBE_SCRIPT = ['common.sh', 'probe.sh']
+  .map((f) => fs.readFileSync(path.join(__dirname, 'remote', f), 'utf8').replace(/\r/g, ''))
+  .join('\n');
 const MAX_HOSTS = 2048;
 
 /* ---------------------------------------------------------------- ranges -- */
@@ -147,7 +150,9 @@ const readArp = () => new Promise((resolve) => {
 const parseKv = (text) => {
   const out = {};
   for (const line of String(text).split('\n')) {
-    const m = line.match(/^([a-z_]+)=(.*)$/);
+    // digits allowed: pm2, in_pm2, pm2_name - without them those keys were
+    // silently dropped and a running camera looked like an unfinished install
+    const m = line.match(/^([a-z][a-z0-9_]*)=(.*)$/);
     if (m) out[m[1]] = m[2].trim();
   }
   return out;
@@ -182,9 +187,13 @@ const classify = (item, byMac) => {
   if (known) {
     item.known = { deviceId: known.device_id, hostname: known.hostname, ip: known.ip };
   }
+  const p = item.probe || {};
   if (!item.ssh) item.status = 'unreachable';
-  else if (!item.probe || !item.probe.ok) item.status = 'denied';
-  else if (item.probe.app !== 'yes') item.status = 'new';
+  else if (!p.ok) item.status = 'denied';
+  else if (p.app !== 'yes') item.status = 'new';
+  // an install from here that stopped half way: no pm2 entry yet, and our own
+  // marker in the folder - picking it up again is safe
+  else if (p.in_pm2 !== 'yes' && p.center_install === 'yes') item.status = 'resume';
   else if (known) item.status = 'known';
   else item.status = 'installed';
   return item;

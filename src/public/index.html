@@ -1433,6 +1433,7 @@
 
     const PROV_STATUS = {
       new: ['new', 'ใหม่ ยังไม่มีโปรแกรม'],
+      resume: ['new', 'ติดตั้งค้าง ลงต่อได้'],
       known: ['known', 'อยู่ในระบบ'],
       installed: ['installed', 'มีโปรแกรม แต่ยังไม่ส่งเข้า center'],
       denied: ['denied', 'เข้าไม่ได้'],
@@ -1589,7 +1590,7 @@
         scan.results.forEach((r) => { counts[r.status] = (counts[r.status] || 0) + 1; });
         const parts = Object.entries(counts).map(([k, n]) => (PROV_STATUS[k] || [k, k])[1] + ' ' + n);
         setStatus(statusId, 'พบ ' + scan.results.length + ' เครื่องที่เปิด ssh' + (parts.length ? ' — ' + parts.join(' · ') : ''), 'ok');
-        prov.sel.install = new Set(prov.scan.filter((r) => r.status === 'new').map((r) => r.ip));
+        prov.sel.install = new Set(prov.scan.filter((r) => r.status === 'new' || r.status === 'resume').map((r) => r.ip));
         renderInstallTable();
         renderUpdateTable();
       } catch (e) {
@@ -1621,7 +1622,7 @@
       if (!prov.scan.length) { box.innerHTML = '<div class="set-empty">ไม่พบเครื่องที่เปิด ssh ในช่วงนี้</div>'; updateInstallButton(); return; }
       const rows = prov.scan.map((r) => {
         const p = r.probe || {};
-        const can = r.status === 'new';
+        const can = r.status === 'new' || r.status === 'resume';
         const checked = prov.sel.install.has(r.ip);
         const note = r.status === 'known' || r.status === 'installed' ? 'มีโปรแกรมแล้ว → ใช้แท็บอัปเดต'
           : r.status === 'denied' ? esc((p.error || '')) : r.status === 'unreachable' ? 'ssh ไม่ตอบ' : '';
@@ -1675,7 +1676,9 @@
         return '<tr class="click' + (checked ? ' sel' : '') + '" onclick="toggleSel(\'update\',\'' + r.ip + '\')">' +
           '<td><input type="checkbox" ' + (checked ? 'checked ' : '') + 'onclick="event.stopPropagation();toggleSel(\'update\',\'' + r.ip + '\')"></td>' +
           '<td>' + esc(r.ip) + '</td>' +
-          '<td>' + esc(rowLabel(r)) + '</td>' +
+          '<td>' + esc(rowLabel(r)) +
+            '<div class="step-text">' + esc((p.app_dir || '').replace(/^\/home\/[^/]+/, '~')) +
+            (p.pm2_name ? ' · pm2: ' + esc(p.pm2_name) : ' · ไม่ได้รันผ่าน pm2') + '</div></td>' +
           '<td>' + esc(p.site || '-') + '</td>' +
           '<td>' + esc(p.version || '-') + '</td>' +
           '<td><span class="tag ' + cls + '">' + text + '</span></td>' +

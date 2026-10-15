@@ -1,6 +1,6 @@
-# Read-only look at a camera. Runs over ssh with bash -s and prints key=value
-# lines the center parses. Changes nothing - safe on a camera in production.
-APP="$HOME/Desktop/OCR-V8.1"
+# Read-only look at a camera. common.sh is prepended by the center (for
+# locate_app/find_node); this prints key=value lines the center parses.
+# Changes nothing - safe on a camera in production.
 
 kv() { printf '%s=%s\n' "$1" "$2"; }
 
@@ -17,8 +17,12 @@ kv disk_free_mb "$(df -Pm / 2>/dev/null | awk 'NR==2 {print $4}')"
 kv time_utc "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 lsusb 2>/dev/null | grep -qi movidius && kv oak yes || kv oak no
 
-if [ -d "$APP" ]; then
+locate_app
+if [ -n "$APP_FOUND" ]; then
     kv app yes
+    kv app_dir "$APP"
+    kv pm2_name "${PM2_NAME:-}"
+    kv in_pm2 "$IN_PM2"
     if [ -f "$APP/.firmware.json" ]; then
         kv version "$(sed -n 's/.*"version" *: *"\([^"]*\)".*/\1/p' "$APP/.firmware.json" | head -1)"
     elif [ -d "$APP/.git" ]; then
@@ -27,37 +31,29 @@ if [ -d "$APP" ]; then
         kv version unknown
     fi
     if [ -f "$APP/config.json" ]; then
-        kv site "$(sed -n 's/.*"code" *: *"\([^"]*\)".*/\1/p' "$APP/config.json" | head -1)"
         kv config yes
+        kv site "$(python3 -c "import json,sys; print((json.load(open(sys.argv[1])).get('site') or {}).get('code',''))" "$APP/config.json" 2>/dev/null)"
     else
         kv config no
     fi
+    # left by an install from the center that did not finish: safe to resume
+    [ -f "$APP/.center-install" ] && kv center_install yes || kv center_install no
 else
     kv app no
 fi
 
-# pm2 lives in ~/.local/bin on cameras we install, and is not on the PATH of a
-# non-interactive ssh session - look for node first, then run pm2 through it
-NODE=$(command -v node 2>/dev/null)
-for c in "$HOME/.local/bin/node" /usr/local/bin/node /usr/bin/node; do
-    [ -z "$NODE" ] && [ -x "$c" ] && NODE="$c"
-done
-PM2_JS=""
-for c in "$HOME/.local/lib/node_modules/pm2/bin/pm2" /usr/local/lib/node_modules/pm2/bin/pm2 /usr/lib/node_modules/pm2/bin/pm2; do
-    [ -z "$PM2_JS" ] && [ -f "$c" ] && PM2_JS="$c"
-done
-if [ -n "$NODE" ] && [ -n "$PM2_JS" ]; then
-    STATUS=$("$NODE" "$PM2_JS" jlist 2>/dev/null | "$NODE" -e '
-      let s = ""; process.stdin.on("data", d => s += d).on("end", () => {
+if [ "$IN_PM2" = "yes" ]; then
+    STATUS=$(pm2_run jlist 2>/dev/null | "$NODE" -e '
+      let s = ""; process.stdin.on("data", (d) => { s += d; }).on("end", () => {
         try {
-          const a = JSON.parse(s).find(p => p.name === "ocr");
+          const a = JSON.parse(s).find((p) => p.name === process.argv[1]);
           console.log(a ? a.pm2_env.status : "none");
         } catch (e) { console.log("unknown"); }
-      });' 2>/dev/null)
+      });' "$PM2_NAME" 2>/dev/null)
     kv pm2 "${STATUS:-unknown}"
 else
     kv pm2 none
 fi
-kv node "$( [ -n "$NODE" ] && "$NODE" -v 2>/dev/null || echo none)"
-kv web "$(curl -s -o /dev/null -m 4 -w '%{http_code}' http://127.0.0.1:64010/login 2>/dev/null || echo 000)"
+kv node "$( [ -n "${NODE:-}" ] && "$NODE" -v 2>/dev/null || echo none)"
+kv web "$(curl -s --noproxy '*' -o /dev/null -m 4 -w '%{http_code}' http://127.0.0.1:64010/login 2>/dev/null || echo 000)"
 kv done 1

@@ -93,6 +93,65 @@ pm2_run() {
     "$NODE" "$PM2_JS" "$@"
 }
 
+# Where the OCR program really is on this camera, and what pm2 calls it.
+#
+# The fleet was not installed one way: most cameras run ~/Desktop/OCR-V8.1
+# as "ocr", others run from ~/OCR-NEW or ~/Desktop/OCR-... under another
+# name. Assuming the default path would make such a camera look empty - and
+# an empty-looking camera is one the installer would happily install a
+# second copy onto, with a blank config. So: ask pm2 what it runs and from
+# where, recognise the program by its package.json, and only then fall back
+# to looking in the usual folders.
+#
+# Sets APP_FOUND (empty when there is no program), APP, PM2_NAME (empty when
+# pm2 does not run it) and IN_PM2 (yes/no).
+OCR_PKG_NAME="sritrang-ocr"
+is_ocr_dir() {
+    [ -f "$1/package.json" ] && grep -q "\"name\": *\"$OCR_PKG_NAME\"" "$1/package.json" 2>/dev/null
+}
+locate_app() {
+    APP_FOUND=""; PM2_NAME=""; IN_PM2=no
+    find_node
+    if [ -n "$NODE" ] && [ -n "$PM2_JS" ]; then
+        LINE=$("$NODE" "$PM2_JS" jlist 2>/dev/null | "$NODE" -e '
+          const fs = require("fs"), path = require("path");
+          let s = ""; process.stdin.on("data", (d) => { s += d; }).on("end", () => {
+            let apps = [];
+            try { apps = JSON.parse(s); } catch (e) { return; }
+            for (const a of apps) {
+              const cwd = a.pm2_env && a.pm2_env.pm_cwd;
+              if (!cwd) continue;
+              try {
+                const pkg = JSON.parse(fs.readFileSync(path.join(cwd, "package.json"), "utf8"));
+                if (pkg.name === process.argv[1]) { console.log(a.name + "|" + cwd.replace(/\/$/, "")); return; }
+              } catch (e) { /* not a node app folder */ }
+            }
+          });' "$OCR_PKG_NAME" 2>/dev/null)
+        if [ -n "$LINE" ]; then
+            PM2_NAME="${LINE%%|*}"
+            APP_FOUND="${LINE#*|}"
+            IN_PM2=yes
+        fi
+    fi
+    if [ -z "$APP_FOUND" ]; then
+        for d in "$HOME/Desktop/OCR-V8.1" "$HOME"/Desktop/OCR* "$HOME"/OCR* "$HOME"/Desktop/*/ "$HOME"/*/; do
+            d="${d%/}"
+            if is_ocr_dir "$d"; then APP_FOUND="$d"; break; fi
+        done
+    fi
+    [ -n "$APP_FOUND" ] && APP="$APP_FOUND"
+    export APP PM2_NAME IN_PM2 APP_FOUND
+}
+
+# pm2 knows the program under the name it was started with - restart by that
+ocr_restart() {
+    if [ -n "${PM2_NAME:-}" ]; then
+        pm2_run restart "$PM2_NAME" >/dev/null 2>&1
+    else
+        (cd "$APP" && pm2_run start ecosystem.config.js >/dev/null 2>&1)
+    fi
+}
+
 wait_web() {
     for _ in $(seq 1 "${1:-60}"); do
         CODE=$(curl -s --noproxy '*' -o /dev/null -m 3 -w '%{http_code}' http://127.0.0.1:64010/login 2>/dev/null)

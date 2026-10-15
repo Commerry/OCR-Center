@@ -13,7 +13,11 @@ PROTECTED="config.json .env config Img logs result temp pidlog.json node_modules
 
 step "1/9 ตรวจเครื่อง"
 need_sudo
-[ -d "$APP" ] || fail "ยังไม่มีโปรแกรมที่ $APP - ใช้ 'ติดตั้งกล้องใหม่' แทน"
+# update the program where it actually is, under the name pm2 actually uses -
+# not every camera was installed at ~/Desktop/OCR-V8.1 as "ocr"
+locate_app
+[ -n "$APP_FOUND" ] || fail "ไม่พบโปรแกรม OCR บนเครื่องนี้ - ใช้ 'ติดตั้งกล้องใหม่' แทน"
+ok "โปรแกรมอยู่ที่ $APP (pm2: ${PM2_NAME:-ไม่ได้รันผ่าน pm2})"
 [ -f "$APP/config.json" ] || fail "ไม่มี $APP/config.json - ไม่อัปเดตเพราะไม่มีอะไรให้ปกป้อง ตรวจเครื่องนี้ด้วยมือก่อน"
 FREE=$(df -Pm "$HOME" | awk 'NR==2 {print $4}')
 [ "${FREE:-0}" -gt 500 ] || fail "พื้นที่ว่างเหลือ ${FREE} MB - ต้องมีอย่างน้อย 500 MB"
@@ -81,7 +85,7 @@ rollback() {
         (cd "$APP" && npm install --no-audit --no-fund --legacy-peer-deps --loglevel=error >/dev/null 2>&1)
     fi
     no_proxy_env
-    pm2_run restart ocr >/dev/null 2>&1
+    ocr_restart
     wait_web 60 && warn "ถอยกลับสำเร็จ กล้องกลับมาใช้ $OLD_VERSION แล้ว" || warn "ถอยกลับแล้วแต่หน้าเว็บยังไม่ขึ้น - ต้องดูเครื่องนี้ด้วยมือ"
 }
 
@@ -101,7 +105,7 @@ fi
 
 step "9/9 รีสตาร์ทและตรวจผล"
 no_proxy_env
-pm2_run restart ocr >/dev/null 2>&1 || pm2_run start ecosystem.config.js >/dev/null 2>&1
+ocr_restart
 if ! wait_web 90; then
     rollback
     fail "เวอร์ชันใหม่ไม่ขึ้นใน 90 วินาที - ถอยกลับเวอร์ชันเดิมแล้ว"
@@ -119,7 +123,7 @@ PYSITE
 )
 if [ "$RESTORED" = "yes" ]; then
     warn "มีคนบันทึกค่ากล้องระหว่างอัปเดต ชื่อไซต์หลุด - ใส่คืนแล้ว รีสตาร์ทอีกรอบ"
-    pm2_run restart ocr >/dev/null 2>&1
+    ocr_restart
     wait_web 60 || warn "รีสตาร์ทรอบสองแล้วหน้าเว็บยังไม่ขึ้น"
 fi
 ok "หน้าเว็บตอบ 200 - ใช้ $BUNDLE_VERSION แล้ว"

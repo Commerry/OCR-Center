@@ -8,9 +8,26 @@ ARCH=$(uname -m)
 [ "$ARCH" = "aarch64" ] || fail "เครื่องนี้เป็น $ARCH - โปรแกรมกล้องรองรับเฉพาะ aarch64 (CM4)"
 FREE=$(df -Pm "$HOME" | awk 'NR==2 {print $4}')
 [ "${FREE:-0}" -gt 1500 ] || fail "พื้นที่ว่างเหลือ ${FREE} MB - ต้องมีอย่างน้อย 1.5 GB"
-if [ -f "$APP/config.json" ] && [ "${FORCE:-0}" != "1" ]; then
-    fail "เครื่องนี้มีโปรแกรมและคอนฟิกอยู่แล้ว - ใช้ 'อัปเดตเฟิร์มแวร์' แทน คอนฟิกจะได้ไม่หาย"
+# never install over a camera that already has the program - wherever it
+# lives and whatever pm2 calls it. The one exception is an install from the
+# center that stopped half way: our own marker, and pm2 not running it yet.
+locate_app
+if [ -n "$APP_FOUND" ]; then
+    if [ "$IN_PM2" = "yes" ]; then
+        fail "เครื่องนี้มีโปรแกรม OCR ทำงานอยู่แล้วที่ $APP_FOUND (pm2: $PM2_NAME) - ใช้ 'อัปเดตเฟิร์มแวร์' แทน คอนฟิกจะได้ไม่หาย"
+    fi
+    if [ ! -f "$APP_FOUND/.center-install" ]; then
+        fail "เครื่องนี้มีโปรแกรม OCR อยู่แล้วที่ $APP_FOUND ซึ่งไม่ได้ลงจาก center - ไม่ติดตั้งทับ ตรวจเครื่องนี้ด้วยมือก่อน"
+    fi
+    info "พบการติดตั้งที่ค้างไว้ที่ $APP_FOUND - ลงต่อจากเดิม"
+else
+    APP="$HOME/Desktop/OCR-V8.1"
+    # a config.json with no program around it is still somebody's settings
+    if [ -f "$APP/config.json" ] && [ ! -f "$APP/.center-install" ]; then
+        fail "มี $APP/config.json อยู่แล้ว (ไม่ได้ลงจาก center) - ไม่ติดตั้งทับ ตรวจเครื่องนี้ด้วยมือก่อน"
+    fi
 fi
+export APP
 ok "$(tr -d '\0' < /proc/device-tree/model 2>/dev/null) / ว่าง ${FREE} MB / $(whoami)"
 
 step "2/12 ตั้งเวลาให้ตรงกับ center"
@@ -26,6 +43,9 @@ step "5/12 แตกไฟล์โปรแกรม"
 mkdir -p "$APP"
 tar -xzf /tmp/ocr-fw.tgz -C "$APP" || fail "แตกไฟล์ไม่สำเร็จ"
 mkdir -p "$APP/Img" "$APP/logs"
+# marks this folder as ours: if the install stops later, the next scan
+# offers to resume it instead of treating the camera as already set up
+date -u '+%Y-%m-%dT%H:%M:%SZ' > "$APP/.center-install"
 ok "ลงที่ $APP"
 
 step "6/12 Node.js"
