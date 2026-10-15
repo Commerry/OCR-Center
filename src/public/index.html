@@ -323,6 +323,80 @@
     .table-wrap { border: 1px solid var(--line-soft); border-radius: var(--radius-md); overflow: hidden; max-height: 320px; overflow-y: auto; }
 
     .detail-img { width: 100%; max-height: 300px; object-fit: contain; background: #0b0b0e; border: 1px solid var(--line-soft); border-radius: var(--radius-md); }
+
+    /* ===== Settings & camera tools ===== */
+    .set-panel { max-width: 1180px; }
+    .set-body { display: grid; grid-template-columns: 200px 1fr; gap: 1.3rem; min-height: 480px; }
+    .set-nav { display: flex; flex-direction: column; gap: .25rem; border-right: 1px solid var(--line-soft); padding-right: 1rem; }
+    .set-nav button {
+      display: flex; align-items: center; justify-content: space-between; gap: .5rem;
+      text-align: left; background: none; border: 1px solid transparent; color: var(--text-2);
+      border-radius: var(--radius-sm); padding: .55rem .7rem; font-family: var(--font-ui);
+      font-size: .78rem; font-weight: 600; cursor: pointer;
+    }
+    .set-nav button:hover { background: var(--surface-2); color: var(--text-1); }
+    .set-nav button.active { background: var(--surface-3); border-color: var(--line); color: #fff; }
+    .set-nav .nav-gap { height: .6rem; border-bottom: 1px solid var(--line-soft); margin-bottom: .6rem; }
+    .set-sec { display: none; min-width: 0; }
+    .set-sec.active { display: block; }
+    .set-lead { font-size: .76rem; color: var(--text-2); line-height: 1.6; margin-bottom: .9rem; }
+    .set-lead b { color: var(--text-1); }
+    .set-row { display: flex; flex-wrap: wrap; align-items: flex-end; gap: .6rem; margin-bottom: .8rem; }
+    .set-row .rep-field { flex: 1 1 180px; }
+    .set-row textarea, .set-form textarea {
+      width: 100%; min-height: 64px; resize: vertical; background: var(--bg-1); color: var(--text-1);
+      border: 1px solid var(--line); border-radius: var(--radius-sm); padding: .5rem .6rem;
+      font-family: var(--font-mono); font-size: .74rem; user-select: text;
+    }
+    .set-form { display: grid; grid-template-columns: 1fr 1fr; gap: .8rem 1rem; }
+    .set-form .full { grid-column: 1 / -1; }
+    .set-form .hint { font-size: .66rem; color: var(--text-3); line-height: 1.5; }
+    .set-status { font-size: .72rem; color: var(--text-2); min-height: 1.1rem; margin: .3rem 0 .6rem; }
+    .set-status.err { color: var(--err); }
+    .set-status.ok { color: var(--ok); }
+    .set-table-wrap { overflow-x: auto; border: 1px solid var(--line-soft); border-radius: var(--radius-sm); }
+    .set-table-wrap table tbody td { font-size: .72rem; vertical-align: middle; }
+    .set-table-wrap tbody tr.off td { opacity: .5; }
+    .set-table-wrap tbody tr.click { cursor: pointer; }
+    .set-table-wrap tbody tr.click:hover td { background: var(--surface-2); }
+    .set-table-wrap tbody tr.sel td { background: rgba(125, 211, 252, .06); }
+    .set-empty { padding: 1.4rem; text-align: center; font-size: .74rem; color: var(--text-3); }
+    .tag {
+      display: inline-block; padding: .12rem .45rem; border-radius: 999px; font-size: .64rem;
+      font-weight: 700; font-family: var(--font-ui); border: 1px solid currentColor; white-space: nowrap;
+    }
+    .tag.new { color: var(--info); }
+    .tag.known, .tag.ok { color: var(--ok); }
+    .tag.installed, .tag.old, .tag.queued { color: var(--warn); }
+    .tag.denied, .tag.unreachable, .tag.failed { color: var(--err); }
+    .tag.running { color: var(--info); }
+    .tag.muted { color: var(--text-3); }
+    .pbar { height: 6px; background: var(--surface-3); border-radius: 999px; overflow: hidden; min-width: 90px; }
+    .pbar > i { display: block; height: 100%; background: var(--info); transition: width .4s ease; }
+    .pbar.ok > i { background: var(--ok); }
+    .pbar.failed > i { background: var(--err); }
+    .step-text { font-size: .66rem; color: var(--text-3); margin-top: .25rem; font-family: var(--font-ui); }
+    pre.joblog {
+      margin-top: .8rem; max-height: 380px; overflow: auto; background: var(--bg-1);
+      border: 1px solid var(--line-soft); border-radius: var(--radius-sm); padding: .7rem .8rem;
+      font-family: var(--font-mono); font-size: .68rem; line-height: 1.5; color: var(--text-2);
+      white-space: pre-wrap; word-break: break-word; user-select: text;
+    }
+    .set-note {
+      border: 1px solid var(--line); border-left: 3px solid var(--ok); border-radius: var(--radius-sm);
+      background: var(--surface-2); padding: .7rem .9rem; font-size: .72rem; color: var(--text-2);
+      line-height: 1.6; margin: .8rem 0;
+    }
+    .set-note.warn { border-left-color: var(--warn); }
+    .set-note b { color: var(--text-1); }
+    .set-actions { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin-top: .9rem; }
+    .btn[disabled] { opacity: .45; cursor: not-allowed; }
+    @media (max-width: 860px) {
+      .set-body { grid-template-columns: 1fr; }
+      .set-nav { flex-direction: row; flex-wrap: wrap; border-right: none; border-bottom: 1px solid var(--line-soft); padding: 0 0 .7rem; }
+      .set-nav .nav-gap { display: none; }
+      .set-form { grid-template-columns: 1fr; }
+    }
   </style>
 </head>
 
@@ -343,6 +417,7 @@
     <symbol id="i-tool" viewBox="0 0 24 24"><path d="M14.7 6.3a4 4 0 0 1-5.4 5.4L4 17v3h3l5.3-5.3a4 4 0 0 1 5.4-5.4l-2.5 2.5 2.1 2.1 2.5-2.5a4 4 0 0 1-5.1-5.1z"/></symbol>
   <symbol id="i-report" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></symbol>
     <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></symbol>
+    <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></symbol>
   </svg>
 
   <header class="topbar">
@@ -355,6 +430,9 @@
     </div>
     <div class="sum-chips" id="sumChips"></div>
     <div class="sum-chips" id="storeChips"></div>
+    <button class="btn" onclick="openSettings()" title="ติดตั้งกล้องใหม่ อัปเดตเฟิร์มแวร์ และค่าการเชื่อมต่อ">
+      <svg class="icon"><use href="#i-gear"/></svg> ตั้งค่า
+    </button>
     <button class="btn" onclick="openMaint()" title="ดู log และล้างไฟล์ที่ไม่จำเป็น">
       <svg class="icon"><use href="#i-tool"/></svg> ระบบ
     </button>
@@ -504,6 +582,160 @@
     </div>
   </div>
 
+
+  <!-- ===== Settings & camera tools ===== -->
+  <div class="overlay" id="setOverlay">
+    <div class="panel set-panel">
+      <div class="panel-head">
+        <svg class="icon" style="width:1.2rem;height:1.2rem"><use href="#i-gear"/></svg>
+        <div>
+          <div class="panel-title">ตั้งค่าและเครื่องมือกล้อง</div>
+          <div class="panel-sub">ติดตั้งโปรแกรมให้กล้องใหม่ · อัปเดตเฟิร์มแวร์ทุกตัวพร้อมกัน โดยไม่แตะคอนฟิก</div>
+        </div>
+        <button class="x-btn" onclick="closeSettings()"><svg class="icon"><use href="#i-x"/></svg></button>
+      </div>
+
+      <div class="set-body">
+        <nav class="set-nav" id="setNav">
+          <button data-tab="install" class="active">ติดตั้งกล้องใหม่</button>
+          <button data-tab="update">อัปเดตเฟิร์มแวร์</button>
+          <button data-tab="jobs">งานที่กำลังทำ <span class="tag muted" id="jobsBadge" style="display:none"></span></button>
+          <div class="nav-gap"></div>
+          <button data-tab="firmware">ไฟล์เฟิร์มแวร์</button>
+          <button data-tab="conn">การเชื่อมต่อกล้อง</button>
+          <button data-tab="system">ระบบ / log</button>
+        </nav>
+
+        <!-- ติดตั้งกล้องใหม่ -->
+        <section class="set-sec active" id="sec-install">
+          <div class="set-lead">
+            เสียบกล้องใหม่ในวงแลนเดียวกับ center แล้วกด <b>สแกน</b> — กล้องที่ยังไม่มีโปรแกรมจะขึ้นเป็น <span class="tag new">ใหม่</span>
+            เลือกแล้วกดติดตั้ง center จะตั้งเวลา ตั้ง proxy ลงโปรแกรม ตั้งให้ส่งข้อมูลเข้า center และให้ขึ้นเองตอนบูตให้ครบ
+          </div>
+          <div class="set-row">
+            <div class="rep-field" style="flex:3 1 260px">
+              <label>ช่วง IP ที่จะสแกน (คั่นด้วยเว้นวรรค)</label>
+              <input id="instRanges" placeholder="10.2.100.0/24">
+            </div>
+            <button class="btn grad" id="instScanBtn" onclick="startScan('install')">สแกน</button>
+          </div>
+          <div class="set-status" id="instScanStatus"></div>
+          <div class="set-table-wrap" id="instTable"><div class="set-empty">ยังไม่ได้สแกน</div></div>
+
+          <div class="sec-title">ตั้งชื่อไซต์ให้กล้องที่จะติดตั้ง</div>
+          <div class="set-row">
+            <div class="rep-field"><label>รหัสไซต์ (ขึ้นหน้า login)</label><input id="instSiteCode" placeholder="STA-SK"></div>
+            <div class="rep-field"><label>หัวเรื่องแท็บเบราว์เซอร์</label><input id="instSiteTitle" placeholder="OCR-STA-SK"></div>
+            <div class="rep-field"><label>บริษัท</label><input id="instSiteCompany" placeholder="STGT"></div>
+            <div class="rep-field"><label>ไฟล์เฟิร์มแวร์</label><select id="instBundle"></select></div>
+          </div>
+          <div class="set-note">
+            ติดตั้งเสร็จแล้วยังต้องเข้าไป <b>ตั้งกรอบ crop / IP ของ PLC / โฟกัส</b> ที่หน้าเว็บของกล้องเองเหมือนเดิม —
+            ค่าพวกนั้นต่างกันทุกจุดติดตั้ง และหลังจากนี้การอัปเดตเฟิร์มแวร์จะไม่แตะมันอีก
+          </div>
+          <div class="set-actions">
+            <button class="btn grad" id="instGo" onclick="startJobs('install')" disabled>ติดตั้งให้กล้องที่เลือก</button>
+            <span class="set-status" id="instGoStatus" style="margin:0"></span>
+          </div>
+        </section>
+
+        <!-- อัปเดตเฟิร์มแวร์ -->
+        <section class="set-sec" id="sec-update">
+          <div class="set-lead">
+            อัปเดตโปรแกรมกล้องหลายตัวพร้อมกัน — <b>คอนฟิกของแต่ละไซต์ไม่ถูกแตะ</b>
+            กล้องที่อยู่ต่างวงกับ center ใช้ปุ่ม "ตรวจกล้องที่อยู่ในระบบ" ซึ่งเข้าไปดูตาม IP ที่กล้องรายงานไว้
+          </div>
+          <div class="set-row">
+            <button class="btn grad" id="updKnownBtn" onclick="startScan('update', true)">ตรวจกล้องที่อยู่ในระบบ</button>
+            <div class="rep-field" style="flex:2 1 220px">
+              <label>หรือสแกนช่วง IP เพิ่ม</label>
+              <input id="updRanges" placeholder="10.36.181.0/24">
+            </div>
+            <button class="btn" onclick="startScan('update', false)">สแกนช่วงนี้</button>
+          </div>
+          <div class="set-status" id="updScanStatus"></div>
+          <div class="set-table-wrap" id="updTable"><div class="set-empty">กดตรวจหรือสแกนก่อน</div></div>
+
+          <div class="set-row" style="margin-top:.9rem">
+            <div class="rep-field"><label>อัปเดตเป็นเวอร์ชัน</label><select id="updBundle" onchange="renderUpdateTable()"></select></div>
+          </div>
+          <div class="set-note">
+            <b>สิ่งที่ไม่ถูกแตะ:</b> config.json (กรอบ crop, IP PLC, โฟกัส, โมเดล, ชื่อไซต์, URL center), .env, ผู้ใช้, รูป, log<br>
+            <b>ก่อนอัปเดต:</b> สำรองโปรแกรมเดิมไว้ที่ ~/ocr-backups บนกล้อง และเช็คว่า config.json ไม่เปลี่ยนแม้แต่ไบต์เดียว<br>
+            <b>ถ้าเวอร์ชันใหม่ไม่ขึ้นใน 90 วินาที</b> กล้องถอยกลับเวอร์ชันเดิมเอง
+          </div>
+          <div class="set-actions">
+            <button class="btn" onclick="selectOutdated()">เลือกตัวที่ยังเป็นรุ่นเก่า</button>
+            <button class="btn grad" id="updGo" onclick="startJobs('update')" disabled>อัปเดตตัวที่เลือก</button>
+            <span class="set-status" id="updGoStatus" style="margin:0"></span>
+          </div>
+        </section>
+
+        <!-- งาน -->
+        <section class="set-sec" id="sec-jobs">
+          <div class="set-lead">งานติดตั้ง/อัปเดตที่สั่งไป — คลิกแถวเพื่อดูรายละเอียดสด</div>
+          <div class="set-table-wrap" id="jobsTable"><div class="set-empty">ยังไม่มีงาน</div></div>
+          <div id="jobDetail"></div>
+        </section>
+
+        <!-- ไฟล์เฟิร์มแวร์ -->
+        <section class="set-sec" id="sec-firmware">
+          <div class="set-lead">
+            ไฟล์เฟิร์มแวร์คือโปรแกรมกล้องเวอร์ชันหนึ่งที่ดึงจาก GitHub มาเก็บไว้บน center
+            กล้องทุกตัวดึงไฟล์จาก center ตรง ไม่ต้องออก GitHub เอง — ทุกตัวได้ไฟล์เดียวกันเป๊ะ
+          </div>
+          <div class="set-status" id="fwRemote"></div>
+          <div class="set-actions" style="margin-top:0">
+            <button class="btn grad" id="fwBuildBtn" onclick="buildFirmware()">ดึงเวอร์ชันล่าสุดจาก GitHub</button>
+            <button class="btn" onclick="checkRemote()">เช็คว่ามีของใหม่ไหม</button>
+          </div>
+          <pre class="joblog" id="fwBuildLog" style="display:none"></pre>
+          <div class="sec-title">ไฟล์ที่มีบน center</div>
+          <div class="set-table-wrap" id="fwTable"><div class="set-empty">ยังไม่มีไฟล์ — กดดึงเวอร์ชันล่าสุดก่อน</div></div>
+        </section>
+
+        <!-- การเชื่อมต่อ -->
+        <section class="set-sec" id="sec-conn">
+          <div class="set-lead">ค่าที่ center ใช้เข้าไปจัดการกล้อง เก็บไว้ใน data/ ของ center — อัปเดต center แล้วไม่หาย</div>
+          <div class="set-form">
+            <div class="rep-field"><label>ผู้ใช้ ssh ของกล้อง</label><input id="cfSshUser"></div>
+            <div class="rep-field"><label>รหัสผ่าน ssh</label><input id="cfSshPass" type="password" placeholder="(เว้นว่าง = ใช้รหัสเดิม)"></div>
+            <div class="rep-field full">
+              <label>ช่วง IP ที่สแกนเป็นค่าเริ่มต้น (บรรทัดละช่วง)</label>
+              <textarea id="cfRanges" placeholder="10.2.100.0/24"></textarea>
+              <div class="hint" id="cfLocalHint"></div>
+            </div>
+            <div class="rep-field full">
+              <label>Proxy เริ่มต้น (เว้นว่าง = กล้องออกเน็ตตรง)</label>
+              <input id="cfProxy" placeholder="http://10.201.0.54:8080">
+            </div>
+            <div class="rep-field full">
+              <label>Proxy แยกตามวง (บรรทัดละกฎ: วง = proxy)</label>
+              <textarea id="cfProxyRules" placeholder="10.36.181.0/24 = http://10.201.0.54:8080&#10;10.41.182.0/24 = http://10.201.0.54:3128"></textarea>
+              <div class="hint">กล้องใช้กฎแรกที่วงตรง ถ้าไม่ตรงสักกฎใช้ proxy เริ่มต้น — center ถูกยกเว้นจาก proxy เสมอ</div>
+            </div>
+            <div class="rep-field"><label>รหัสไซต์เริ่มต้น</label><input id="cfSiteCode"></div>
+            <div class="rep-field"><label>หัวเรื่องเริ่มต้น</label><input id="cfSiteTitle"></div>
+            <div class="rep-field"><label>บริษัทเริ่มต้น</label><input id="cfSiteCompany"></div>
+            <div class="rep-field"><label>เขตเวลาของกล้อง</label><input id="cfTz"></div>
+            <div class="rep-field"><label>ทำพร้อมกันได้กี่ตัว</label><input id="cfConc" type="number" min="1" max="10"></div>
+            <div class="rep-field"><label>Git repo โปรแกรมกล้อง</label><input id="cfRepo"></div>
+            <div class="rep-field"><label>Branch</label><input id="cfBranch"></div>
+          </div>
+          <div class="set-actions">
+            <button class="btn grad" onclick="saveConn()">บันทึก</button>
+            <span class="set-status" id="cfStatus" style="margin:0"></span>
+          </div>
+        </section>
+
+        <!-- ระบบ -->
+        <section class="set-sec" id="sec-system">
+          <div class="set-lead">ดู log ของ center ล้าง log / ไฟล์ชั่วคราว และบีบอัดฐานข้อมูล (รูปไม่ถูกลบ)</div>
+          <button class="btn grad" onclick="closeSettings(); openMaint();">เปิดหน้าระบบ / log</button>
+        </section>
+      </div>
+    </div>
+  </div>
   <script>
     const REFRESH_MS = 5000;
     let devices = [];
@@ -1150,6 +1382,483 @@
     setInterval(refresh, REFRESH_MS);
     refreshStorage();
     setInterval(refreshStorage, 60000);
+
+    /* ===== Settings & camera tools ===== */
+    const prov = {
+      tab: 'install', settings: null, localRanges: [], knownDevices: 0,
+      scan: [], scanTimer: null, sel: { install: new Set(), update: new Set() },
+      bundles: [], versions: {}, jobs: [], jobsTimer: null,
+      jobId: null, jobFrom: 0, fwTimer: null,
+    };
+
+    const PROV_STATUS = {
+      new: ['new', 'ใหม่ ยังไม่มีโปรแกรม'],
+      known: ['known', 'อยู่ในระบบ'],
+      installed: ['installed', 'มีโปรแกรม แต่ยังไม่ส่งเข้า center'],
+      denied: ['denied', 'เข้าไม่ได้'],
+      unreachable: ['unreachable', 'ต่อไม่ได้'],
+    };
+    const JOB_STATUS = {
+      queued: ['queued', 'รอคิว'], running: ['running', 'กำลังทำ'],
+      ok: ['ok', 'สำเร็จ'], failed: ['failed', 'ไม่สำเร็จ'],
+    };
+
+    async function provApi(path, opts = {}) {
+      const res = await fetch('/api/provision' + path, {
+        headers: { 'Content-Type': 'application/json' },
+        ...opts,
+        body: opts.body ? JSON.stringify(opts.body) : undefined,
+      });
+      let data = {};
+      try { data = await res.json(); } catch (e) { /* not json */ }
+      if (res.status === 401) throw new Error('หมดเวลาเข้าสู่ระบบ - รีเฟรชหน้าแล้วล็อกอินใหม่');
+      if (!res.ok || data.success === false) throw new Error(data.error || ('HTTP ' + res.status));
+      return data;
+    }
+
+    function setStatus(id, text, kind) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.textContent = text || '';
+      el.className = 'set-status' + (kind ? ' ' + kind : '');
+    }
+
+    function openSettings(tab) {
+      document.getElementById('setOverlay').classList.add('show');
+      switchTab(tab || prov.tab);
+      loadProvSettings();
+      loadFirmware();
+      loadJobs();
+    }
+
+    function closeSettings() {
+      document.getElementById('setOverlay').classList.remove('show');
+      clearTimeout(prov.jobsTimer);
+      clearTimeout(prov.fwTimer);
+    }
+
+    function switchTab(tab) {
+      prov.tab = tab;
+      document.querySelectorAll('#setNav button[data-tab]').forEach((b) =>
+        b.classList.toggle('active', b.dataset.tab === tab));
+      document.querySelectorAll('.set-sec').forEach((s) =>
+        s.classList.toggle('active', s.id === 'sec-' + tab));
+      if (tab === 'jobs') loadJobs();
+      if (tab === 'firmware') { loadFirmware(); checkRemote(); }
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+      document.querySelectorAll('#setNav button[data-tab]').forEach((b) =>
+        b.addEventListener('click', () => switchTab(b.dataset.tab)));
+    });
+
+    /* ---------- settings ---------- */
+
+    async function loadProvSettings() {
+      try {
+        const d = await provApi('/settings');
+        prov.settings = d.settings;
+        prov.localRanges = d.localRanges || [];
+        prov.knownDevices = d.knownDevices || 0;
+        const s = d.settings;
+        const ranges = (s.scan.ranges && s.scan.ranges.length ? s.scan.ranges : prov.localRanges).join(' ');
+        const inst = document.getElementById('instRanges');
+        if (!inst.value) inst.value = ranges;
+        for (const [id, v] of [['instSiteCode', s.site.code], ['instSiteTitle', s.site.title], ['instSiteCompany', s.site.company]]) {
+          const el = document.getElementById(id);
+          if (!el.value) el.value = v || '';
+        }
+        document.getElementById('updKnownBtn').textContent =
+          'ตรวจกล้องที่อยู่ในระบบ (' + prov.knownDevices + ' เครื่อง)';
+
+        document.getElementById('cfSshUser').value = s.ssh.user || '';
+        document.getElementById('cfSshPass').value = '';
+        document.getElementById('cfSshPass').placeholder = s.ssh.hasPassword ? '(เว้นว่าง = ใช้รหัสเดิม)' : 'ยังไม่ได้ตั้ง';
+        document.getElementById('cfRanges').value = (s.scan.ranges || []).join('\n');
+        document.getElementById('cfLocalHint').textContent =
+          'วงที่ center อยู่ตอนนี้: ' + (prov.localRanges.join(', ') || '-') + ' (ใช้เมื่อไม่ได้ตั้งค่าไว้)';
+        document.getElementById('cfProxy').value = s.proxy.url || '';
+        document.getElementById('cfProxyRules').value = (s.proxy.rules || []).map((r) => r.cidr + ' = ' + r.url).join('\n');
+        document.getElementById('cfSiteCode').value = s.site.code || '';
+        document.getElementById('cfSiteTitle').value = s.site.title || '';
+        document.getElementById('cfSiteCompany').value = s.site.company || '';
+        document.getElementById('cfTz').value = s.timezone || '';
+        document.getElementById('cfConc').value = s.concurrency || 4;
+        document.getElementById('cfRepo').value = s.firmware.repo || '';
+        document.getElementById('cfBranch').value = s.firmware.branch || '';
+      } catch (e) {
+        setStatus('instScanStatus', 'โหลดค่าตั้งค่าไม่ได้: ' + e.message, 'err');
+      }
+    }
+
+    async function saveConn() {
+      const rules = document.getElementById('cfProxyRules').value.split('\n')
+        .map((l) => l.split('='))
+        .filter((p) => p.length >= 2)
+        .map((p) => ({ cidr: p[0].trim(), url: p.slice(1).join('=').trim() }));
+      const body = {
+        ssh: { user: document.getElementById('cfSshUser').value.trim(), password: document.getElementById('cfSshPass').value },
+        scan: { ranges: document.getElementById('cfRanges').value.split(/[\s,]+/).filter(Boolean) },
+        proxy: { url: document.getElementById('cfProxy').value.trim(), rules },
+        site: {
+          code: document.getElementById('cfSiteCode').value.trim(),
+          title: document.getElementById('cfSiteTitle').value.trim(),
+          company: document.getElementById('cfSiteCompany').value.trim(),
+        },
+        timezone: document.getElementById('cfTz').value.trim(),
+        concurrency: parseInt(document.getElementById('cfConc').value, 10) || 4,
+        firmware: { repo: document.getElementById('cfRepo').value.trim(), branch: document.getElementById('cfBranch').value.trim() },
+      };
+      try {
+        await provApi('/settings', { method: 'POST', body });
+        setStatus('cfStatus', 'บันทึกแล้ว', 'ok');
+        loadProvSettings();
+      } catch (e) {
+        setStatus('cfStatus', 'บันทึกไม่ได้: ' + e.message, 'err');
+      }
+    }
+
+    /* ---------- scan ---------- */
+
+    async function startScan(mode, includeKnown) {
+      const statusId = mode === 'install' ? 'instScanStatus' : 'updScanStatus';
+      const ranges = includeKnown ? [] :
+        document.getElementById(mode === 'install' ? 'instRanges' : 'updRanges').value.split(/[\s,]+/).filter(Boolean);
+      if (!includeKnown && !ranges.length) { setStatus(statusId, 'ใส่ช่วง IP ก่อน', 'err'); return; }
+      clearTimeout(prov.scanTimer);
+      setStatus(statusId, 'เริ่มสแกน...');
+      try {
+        const d = await provApi('/scan', { method: 'POST', body: { ranges, includeKnown: Boolean(includeKnown) } });
+        pollScan(d.id, statusId);
+      } catch (e) {
+        setStatus(statusId, e.message, 'err');
+      }
+    }
+
+    async function pollScan(id, statusId) {
+      try {
+        const { scan } = await provApi('/scan/' + id);
+        if (scan.status === 'running') {
+          setStatus(statusId, scan.stage + (scan.total ? '  (' + scan.done + '/' + scan.total + ')' : ''));
+          prov.scanTimer = setTimeout(() => pollScan(id, statusId), 1000);
+          return;
+        }
+        if (scan.status === 'failed') { setStatus(statusId, 'สแกนไม่สำเร็จ: ' + scan.error, 'err'); return; }
+        mergeScan(scan.results);
+        const counts = {};
+        scan.results.forEach((r) => { counts[r.status] = (counts[r.status] || 0) + 1; });
+        const parts = Object.entries(counts).map(([k, n]) => (PROV_STATUS[k] || [k, k])[1] + ' ' + n);
+        setStatus(statusId, 'พบ ' + scan.results.length + ' เครื่องที่เปิด ssh' + (parts.length ? ' — ' + parts.join(' · ') : ''), 'ok');
+        prov.sel.install = new Set(prov.scan.filter((r) => r.status === 'new').map((r) => r.ip));
+        renderInstallTable();
+        renderUpdateTable();
+      } catch (e) {
+        setStatus(statusId, e.message, 'err');
+      }
+    }
+
+    // a second scan of other ranges adds to what is shown instead of wiping it
+    function mergeScan(results) {
+      const byIp = new Map(prov.scan.map((r) => [r.ip, r]));
+      results.forEach((r) => byIp.set(r.ip, r));
+      prov.scan = [...byIp.values()].sort((a, b) => ipNum(a.ip) - ipNum(b.ip));
+    }
+    const ipNum = (ip) => ip.split('.').reduce((n, p) => n * 256 + (+p), 0);
+
+    function rowLabel(r) {
+      const p = r.probe || {};
+      return (r.known && r.known.hostname) || p.hostname || r.ip;
+    }
+
+    function statusTag(r) {
+      const [cls, text] = PROV_STATUS[r.status] || ['muted', r.status];
+      const why = r.probe && !r.probe.ok ? ' title="' + esc(r.probe.error || '') + '"' : '';
+      return '<span class="tag ' + cls + '"' + why + '>' + text + '</span>';
+    }
+
+    function renderInstallTable() {
+      const box = document.getElementById('instTable');
+      if (!prov.scan.length) { box.innerHTML = '<div class="set-empty">ไม่พบเครื่องที่เปิด ssh ในช่วงนี้</div>'; updateInstallButton(); return; }
+      const rows = prov.scan.map((r) => {
+        const p = r.probe || {};
+        const can = r.status === 'new';
+        const checked = prov.sel.install.has(r.ip);
+        const note = r.status === 'known' || r.status === 'installed' ? 'มีโปรแกรมแล้ว → ใช้แท็บอัปเดต'
+          : r.status === 'denied' ? esc((p.error || '')) : r.status === 'unreachable' ? 'ssh ไม่ตอบ' : '';
+        return '<tr class="' + (can ? 'click' : 'off') + (checked ? ' sel' : '') + '"' +
+          (can ? ' onclick="toggleSel(\'install\',\'' + r.ip + '\')"' : '') + '>' +
+          '<td><input type="checkbox" ' + (checked ? 'checked ' : '') + (can ? '' : 'disabled ') +
+            'onclick="event.stopPropagation();toggleSel(\'install\',\'' + r.ip + '\')"></td>' +
+          '<td>' + esc(r.ip) + '</td>' +
+          '<td>' + esc(r.mac || '-') + '</td>' +
+          '<td>' + esc(rowLabel(r)) + '</td>' +
+          '<td>' + esc((p.model || '').replace('Raspberry Pi ', 'RPi ') || '-') + '</td>' +
+          '<td>' + statusTag(r) + '</td>' +
+          '<td style="font-family:var(--font-ui)">' + note + '</td>' +
+        '</tr>';
+      }).join('');
+      box.innerHTML = '<table><thead><tr><th></th><th>IP</th><th>MAC</th><th>ชื่อเครื่อง</th><th>รุ่น</th><th>สถานะ</th><th>หมายเหตุ</th></tr></thead><tbody>' + rows + '</tbody></table>';
+      updateInstallButton();
+    }
+
+    function bundleFor(selectId) {
+      const id = document.getElementById(selectId).value;
+      return prov.bundles.find((b) => b.id === id) || null;
+    }
+
+    // "20261015-a1b2c3d" or "git-20260929-2d7f5c2" -> compare by commit hash
+    function versionState(current, bundle) {
+      if (!current || current === 'unknown') return ['muted', 'ไม่ทราบ'];
+      if (!bundle) return ['muted', '-'];
+      const sha = (current.match(/([0-9a-f]{7})$/) || [])[1];
+      if (sha && sha === bundle.sha.slice(0, 7)) return ['ok', 'ล่าสุดแล้ว'];
+      return ['old', 'ต่างจากที่เลือก'];
+    }
+
+    function updatable() {
+      return prov.scan.filter((r) => r.status === 'known' || r.status === 'installed');
+    }
+
+    function renderUpdateTable() {
+      const box = document.getElementById('updTable');
+      const list = updatable();
+      const bundle = bundleFor('updBundle');
+      if (!list.length) {
+        box.innerHTML = '<div class="set-empty">' + (prov.scan.length ? 'ยังไม่เจอกล้องที่มีโปรแกรม' : 'กดตรวจหรือสแกนก่อน') + '</div>';
+        updateUpdateButton();
+        return;
+      }
+      const rows = list.map((r) => {
+        const p = r.probe || {};
+        const [cls, text] = versionState(p.version, bundle);
+        const checked = prov.sel.update.has(r.ip);
+        return '<tr class="click' + (checked ? ' sel' : '') + '" onclick="toggleSel(\'update\',\'' + r.ip + '\')">' +
+          '<td><input type="checkbox" ' + (checked ? 'checked ' : '') + 'onclick="event.stopPropagation();toggleSel(\'update\',\'' + r.ip + '\')"></td>' +
+          '<td>' + esc(r.ip) + '</td>' +
+          '<td>' + esc(rowLabel(r)) + '</td>' +
+          '<td>' + esc(p.site || '-') + '</td>' +
+          '<td>' + esc(p.version || '-') + '</td>' +
+          '<td><span class="tag ' + cls + '">' + text + '</span></td>' +
+          '<td>' + esc(p.pm2 || '-') + ' / ' + esc(p.web || '-') + '</td>' +
+          '<td>' + statusTag(r) + '</td>' +
+        '</tr>';
+      }).join('');
+      box.innerHTML = '<table><thead><tr><th></th><th>IP</th><th>ชื่อเครื่อง</th><th>ไซต์</th><th>เวอร์ชันบนกล้อง</th><th>เทียบ</th><th>pm2 / เว็บ</th><th>สถานะ</th></tr></thead><tbody>' + rows + '</tbody></table>';
+      updateUpdateButton();
+    }
+
+    function toggleSel(kind, ip) {
+      const set = prov.sel[kind];
+      if (set.has(ip)) set.delete(ip); else set.add(ip);
+      if (kind === 'install') renderInstallTable(); else renderUpdateTable();
+    }
+
+    function selectOutdated() {
+      const bundle = bundleFor('updBundle');
+      prov.sel.update = new Set(updatable()
+        .filter((r) => versionState((r.probe || {}).version, bundle)[0] !== 'ok')
+        .map((r) => r.ip));
+      renderUpdateTable();
+    }
+
+    function updateInstallButton() {
+      const n = prov.sel.install.size;
+      const b = document.getElementById('instGo');
+      b.disabled = !n || !bundleFor('instBundle');
+      b.textContent = n ? 'ติดตั้งให้ ' + n + ' เครื่องที่เลือก' : 'ติดตั้งให้กล้องที่เลือก';
+      if (!bundleFor('instBundle')) setStatus('instGoStatus', 'ยังไม่มีไฟล์เฟิร์มแวร์ — ไปที่แท็บ "ไฟล์เฟิร์มแวร์" ก่อน', 'err');
+      else setStatus('instGoStatus', '');
+    }
+
+    function updateUpdateButton() {
+      const n = prov.sel.update.size;
+      const b = document.getElementById('updGo');
+      b.disabled = !n || !bundleFor('updBundle');
+      b.textContent = n ? 'อัปเดต ' + n + ' เครื่องที่เลือก' : 'อัปเดตตัวที่เลือก';
+    }
+
+    /* ---------- jobs ---------- */
+
+    async function startJobs(type) {
+      const selectId = type === 'install' ? 'instBundle' : 'updBundle';
+      const statusId = type === 'install' ? 'instGoStatus' : 'updGoStatus';
+      const bundle = bundleFor(selectId);
+      const targets = prov.scan
+        .filter((r) => prov.sel[type].has(r.ip))
+        .map((r) => ({ ip: r.ip, mac: r.mac, centerIp: r.centerIp, label: rowLabel(r) }));
+      if (!targets.length || !bundle) return;
+      const what = type === 'install' ? 'ติดตั้งโปรแกรมใหม่' : 'อัปเดตเฟิร์มแวร์';
+      if (!confirm(what + ' ' + bundle.version + ' ให้ ' + targets.length + ' เครื่อง?\n\n' +
+        targets.map((t) => '  ' + t.ip + '  ' + t.label).join('\n') +
+        (type === 'update' ? '\n\nคอนฟิกของแต่ละเครื่องไม่ถูกแตะ' : ''))) return;
+      const body = { type, targets, bundleId: bundle.id };
+      if (type === 'install') {
+        body.site = {
+          code: document.getElementById('instSiteCode').value.trim(),
+          title: document.getElementById('instSiteTitle').value.trim(),
+          company: document.getElementById('instSiteCompany').value.trim(),
+        };
+      }
+      try {
+        const d = await provApi('/jobs', { method: 'POST', body });
+        setStatus(statusId, 'สั่งแล้ว ' + d.jobs.length + ' งาน', 'ok');
+        prov.sel[type].clear();
+        prov.jobId = d.jobs[0] ? d.jobs[0].id : null;
+        prov.jobFrom = 0;
+        switchTab('jobs');
+      } catch (e) {
+        setStatus(statusId, e.message, 'err');
+      }
+    }
+
+    function fmtClock(iso) {
+      if (!iso) return '-';
+      const d = new Date(iso);
+      return d.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    }
+
+    async function loadJobs() {
+      clearTimeout(prov.jobsTimer);
+      try {
+        const d = await provApi('/jobs');
+        prov.jobs = d.jobs;
+        renderJobs();
+        if (prov.jobId) await loadJobDetail();
+      } catch (e) { /* keep the last table */ }
+      const active = prov.jobs.some((j) => j.status === 'queued' || j.status === 'running');
+      const badge = document.getElementById('jobsBadge');
+      const n = prov.jobs.filter((j) => j.status === 'queued' || j.status === 'running').length;
+      badge.style.display = n ? '' : 'none';
+      badge.textContent = n;
+      if (document.getElementById('setOverlay').classList.contains('show')) {
+        prov.jobsTimer = setTimeout(loadJobs, active ? 2000 : 8000);
+      }
+    }
+
+    function renderJobs() {
+      const box = document.getElementById('jobsTable');
+      if (!prov.jobs.length) { box.innerHTML = '<div class="set-empty">ยังไม่มีงาน</div>'; return; }
+      box.innerHTML = '<table><thead><tr><th>กล้อง</th><th>งาน</th><th>สถานะ</th><th style="width:34%">ความคืบหน้า</th><th>เวอร์ชัน</th><th>เริ่ม</th></tr></thead><tbody>' +
+        prov.jobs.map((j) => {
+          const [cls, text] = JOB_STATUS[j.status] || ['muted', j.status];
+          const pct = j.status === 'ok' ? 100 : Math.round(((j.step || 0) / (j.steps || 1)) * 100);
+          const sub = j.status === 'failed' ? (j.error || '') : (j.stepText || '');
+          return '<tr class="click' + (j.id === prov.jobId ? ' sel' : '') + '" onclick="showJob(\'' + j.id + '\')">' +
+            '<td>' + esc(j.ip) + '<div class="step-text">' + esc(j.label || '') + '</div></td>' +
+            '<td style="font-family:var(--font-ui)">' + (j.type === 'install' ? 'ติดตั้ง' : 'อัปเดต') + '</td>' +
+            '<td><span class="tag ' + cls + '">' + text + '</span></td>' +
+            '<td><div class="pbar ' + j.status + '"><i style="width:' + pct + '%"></i></div>' +
+              '<div class="step-text">' + esc(sub) + '</div></td>' +
+            '<td>' + esc(j.version || '-') + '</td>' +
+            '<td>' + fmtClock(j.startedAt || j.queuedAt) + '</td>' +
+          '</tr>';
+        }).join('') + '</tbody></table>';
+    }
+
+    function showJob(id) {
+      if (prov.jobId !== id) { prov.jobId = id; prov.jobFrom = 0; document.getElementById('jobDetail').innerHTML = ''; }
+      renderJobs();
+      loadJobDetail();
+    }
+
+    async function loadJobDetail() {
+      if (!prov.jobId) return;
+      try {
+        const { job } = await provApi('/jobs/' + prov.jobId + '?since=' + prov.jobFrom);
+        const box = document.getElementById('jobDetail');
+        let pre = document.getElementById('jobLog');
+        if (!pre || pre.dataset.job !== job.id) {
+          box.innerHTML = '<div class="sec-title">log: ' + esc(job.ip) + ' — ' + esc(job.label || '') + '</div><pre class="joblog" id="jobLog"></pre>';
+          pre = document.getElementById('jobLog');
+          pre.dataset.job = job.id;
+        }
+        if (job.log.length) {
+          const stick = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 30;
+          pre.textContent += job.log.join('\n') + '\n';
+          if (stick) pre.scrollTop = pre.scrollHeight;
+        }
+        prov.jobFrom = job.from + job.log.length;
+      } catch (e) { /* job gone after a restart */ }
+    }
+
+    /* ---------- firmware ---------- */
+
+    async function loadFirmware() {
+      clearTimeout(prov.fwTimer);
+      try {
+        const d = await provApi('/firmware');
+        prov.bundles = d.bundles || [];
+        prov.versions = d.versions || {};
+        for (const id of ['instBundle', 'updBundle']) {
+          const sel = document.getElementById(id);
+          const keep = sel.value;
+          sel.innerHTML = prov.bundles.length
+            ? prov.bundles.map((b, i) => '<option value="' + esc(b.id) + '">' + esc(b.version) + (i === 0 ? ' (ล่าสุด)' : '') + '</option>').join('')
+            : '<option value="">ยังไม่มีไฟล์</option>';
+          if (keep && prov.bundles.some((b) => b.id === keep)) sel.value = keep;
+        }
+        renderFirmwareTable();
+        updateInstallButton();
+        renderUpdateTable();
+
+        const log = document.getElementById('fwBuildLog');
+        if (d.building || (d.buildLog && d.buildLog.length)) {
+          log.style.display = '';
+          log.textContent = (d.buildLog || []).join('\n');
+        }
+        document.getElementById('fwBuildBtn').disabled = d.building;
+        if (d.building) prov.fwTimer = setTimeout(loadFirmware, 1500);
+      } catch (e) {
+        setStatus('fwRemote', 'โหลดรายการไฟล์ไม่ได้: ' + e.message, 'err');
+      }
+    }
+
+    function renderFirmwareTable() {
+      const box = document.getElementById('fwTable');
+      if (!prov.bundles.length) { box.innerHTML = '<div class="set-empty">ยังไม่มีไฟล์ — กดดึงเวอร์ชันล่าสุดก่อน</div>'; return; }
+      box.innerHTML = '<table><thead><tr><th>เวอร์ชัน</th><th>คอมมิต</th><th>ขนาด</th><th>ทำเมื่อ</th><th></th></tr></thead><tbody>' +
+        prov.bundles.map((b) =>
+          '<tr><td>' + esc(b.version) + '</td>' +
+          '<td style="font-family:var(--font-ui)">' + esc(b.subject || '') + '</td>' +
+          '<td>' + (b.size / 1048576).toFixed(1) + ' MB</td>' +
+          '<td>' + esc(new Date(b.builtAt).toLocaleString('th-TH')) + '</td>' +
+          '<td><button class="btn" onclick="deleteFirmware(\'' + esc(b.id) + '\')">ลบ</button></td></tr>'
+        ).join('') + '</tbody></table>';
+    }
+
+    async function checkRemote() {
+      setStatus('fwRemote', 'กำลังเช็ค GitHub...');
+      try {
+        const { remote } = await provApi('/firmware/remote');
+        if (!remote) { setStatus('fwRemote', 'ไม่พบ branch นี้บน repo', 'err'); return; }
+        const have = prov.bundles.find((b) => b.sha === remote.sha);
+        setStatus('fwRemote', 'ล่าสุดบน GitHub: ' + remote.short + ' (' + remote.branch + ') — ' +
+          (have ? 'มีไฟล์ของคอมมิตนี้แล้ว (' + have.version + ')' : 'ยังไม่มีบน center กดดึงเพื่อสร้างไฟล์'), have ? 'ok' : '');
+      } catch (e) {
+        setStatus('fwRemote', 'เช็ค GitHub ไม่ได้: ' + e.message, 'err');
+      }
+    }
+
+    async function buildFirmware() {
+      try {
+        await provApi('/firmware/build', { method: 'POST' });
+        document.getElementById('fwBuildLog').style.display = '';
+        document.getElementById('fwBuildLog').textContent = 'เริ่ม...';
+        loadFirmware();
+      } catch (e) {
+        setStatus('fwRemote', e.message, 'err');
+      }
+    }
+
+    async function deleteFirmware(id) {
+      if (!confirm('ลบไฟล์เฟิร์มแวร์ ' + id + ' ออกจาก center? (กล้องที่ลงไปแล้วไม่ได้รับผลกระทบ)')) return;
+      try {
+        await provApi('/firmware/' + encodeURIComponent(id), { method: 'DELETE' });
+        loadFirmware();
+      } catch (e) {
+        setStatus('fwRemote', e.message, 'err');
+      }
+    }
   </script>
 </body>
 

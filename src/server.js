@@ -46,6 +46,21 @@ app.get('/api/health', (req, res) => {
   });
 });
 
+// Firmware download for cameras - outside the login because a camera has no
+// dashboard session; a one-off token issued per job stands in for one.
+app.get('/fw/:token', (req, res) => {
+  // eslint-disable-next-line global-require
+  const firmware = require('./provision/firmware');
+  const bundle = firmware.resolveToken(req.params.token);
+  if (!bundle) return res.status(404).send('ไม่พบไฟล์ หรือลิงก์หมดอายุ');
+  console.log(`firmware: ${bundle.version} -> ${req.ip}`);
+  res.setHeader('Content-Type', 'application/gzip');
+  return res.sendFile(firmware.fileOf(bundle));
+});
+
+// Camera tools (scan / install / firmware) - behind the login
+app.use('/api/provision', auth.requireAuth, require('./routes/provision'));
+
 // Dashboard API + dashboard itself (behind login when DASH_USER is set)
 app.use('/api', auth.requireAuth, apiRoutes);
 app.use('/', auth.requireAuth, express.static(path.join(__dirname, 'public')));
