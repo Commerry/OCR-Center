@@ -86,6 +86,12 @@ if [ "$DEVICES" = "-" ]; then
 fi
 BEFORE_DEVICES="$DEVICES"; BEFORE_CAMERAS="$CAMERAS"; BEFORE_GROUP_N="$GROUP_N"; BEFORE_READS="$READS"
 
+# npm rewrites package-lock.json whenever it installs - that is npm's edit,
+# not a person's, and it must not block the next update. Put it back.
+if git status --porcelain -- package-lock.json 2>/dev/null | grep -q '^ M'; then
+    git checkout -- package-lock.json && ok "คืน package-lock.json ที่ npm เขียนทับไว้ตอนติดตั้งครั้งก่อน"
+fi
+
 DIRTY="$(git status --porcelain 2>/dev/null | grep -v '^??' || true)"
 if [ -n "$DIRTY" ]; then
     warn "มีไฟล์ที่ถูกแก้ในเครื่องนี้ (ไม่ใช่ไฟล์ข้อมูล - พวกนั้น git ไม่ดูแลอยู่แล้ว):"
@@ -147,6 +153,8 @@ say "5. ไลบรารี"
 if echo "$CHANGED" | grep -qE '^package(-lock)?\.json$'; then
     echo "  package.json เปลี่ยน - ติดตั้งใหม่"
     npm install --omit=dev --no-audit --no-fund || die "npm install ไม่ผ่าน"
+    # keep the working tree clean for the next update
+    git checkout -- package-lock.json 2>/dev/null || true
     ok "ไลบรารีอัปเดตแล้ว"
 else
     ok "package.json ไม่เปลี่ยน ข้ามขั้นนี้"
