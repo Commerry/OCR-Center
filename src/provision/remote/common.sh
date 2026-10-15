@@ -270,7 +270,7 @@ pm2_ocr_apps() {
 }
 
 locate_app() {
-    APP_FOUND=""; PM2_NAME=""; IN_PM2=no; SERVING_DIR=""
+    APP_FOUND=""; PM2_NAME=""; PM2_ID=""; IN_PM2=no; SERVING_DIR=""
     find_node
     if port_owner && is_ocr_dir "$OWNER_CWD"; then
         SERVING_DIR="${OWNER_CWD%/}"
@@ -285,6 +285,7 @@ locate_app() {
         [ -n "$line" ] && APP_FOUND=$(printf '%s' "$line" | cut -d'|' -f3)
     fi
     if [ -n "$line" ]; then
+        PM2_ID=$(printf '%s' "$line" | cut -d'|' -f1)
         PM2_NAME=$(printf '%s' "$line" | cut -d'|' -f2)
         IN_PM2=yes
     fi
@@ -295,7 +296,7 @@ locate_app() {
         done
     fi
     [ -n "$APP_FOUND" ] && APP="$APP_FOUND"
-    export APP PM2_NAME IN_PM2 APP_FOUND SERVING_DIR
+    export APP PM2_NAME PM2_ID IN_PM2 APP_FOUND SERVING_DIR
 }
 
 # Who answers on the OCR port: the pid, its folder, and what keeps it going -
@@ -373,26 +374,44 @@ no_boot_start() {
     done
 }
 
-# Leave the OCR port to this user's pm2 running $APP, and to nothing else.
+# A process and everything under it - the server's python workers hold the
+# OAK camera, and one left behind keeps the new program from opening it
+kill_tree() {
+    local k
+    for k in $(ps -o pid= --ppid "$1" 2>/dev/null); do kill_tree "$k" "$2"; done
+    SUDO kill "-$2" "$1" 2>/dev/null || kill "-$2" "$1" 2>/dev/null
+}
+
+# Leave the OCR port free for this user's pm2 to run $APP. Called with this
+# pm2's own copy already stopped, so whatever still answers is a leftover:
 #
-# A pm2 restart only restarts what that pm2 runs. A camera whose program had
-# been started some other way kept the old copy on the port: the restarted
-# one died on "address in use", the old one went on answering 200, and the
-# update looked done while the page never changed. Whatever else holds the
-# port for this same folder is stopped here, and kept from coming back at
-# boot. Something from another folder is left alone - which config is the
-# real one is not a guess to make for the operator.
+#   - a process this pm2 lost: babel-node runs the server as a child, and a
+#     restart that killed only the parent leaves the child on the port with
+#     the old code for as long as the camera stays on. Its environment still
+#     says "pm2 of pi", which is why the first version of this check let it be
+#   - a second pm2 entry for the same folder
+#   - root's pm2, a systemd unit, cron, rc.local, a terminal
+#
+# Each way the restarted copy died on "address in use" while the old one went
+# on answering 200 - the update looked done and the page never changed.
+# Something from another folder is left alone: which config is the real one
+# is not a guess to make for the operator.
 take_over() {
     port_owner || return 0
     if [ "$OWNER_CWD" != "$APP" ]; then
         warn "พอร์ต 64010 ถูกใช้โดย pid $OWNER_PID จาก ${OWNER_CWD:-โฟลเดอร์ที่อ่านไม่ได้} ไม่ใช่ $APP - ไม่หยุดให้เอง"
         return 1
     fi
-    if [ -n "$OWNER_PM_ID" ] && [ "$OWNER_PM2_HOME" = "$HOME/.pm2" ]; then
-        return 0      # ours: the restart that follows is all it needs
-    fi
     local was="$OWNER_PID"
-    if [ -n "$OWNER_PM_ID" ]; then
+    if [ -n "$OWNER_PM_ID" ] && [ "$OWNER_PM2_HOME" = "$HOME/.pm2" ]; then
+        if [ "$OWNER_PM_ID" != "${PM2_ID:-}" ] && pm2_ocr_apps | cut -d'|' -f1 | grep -qx "$OWNER_PM_ID"; then
+            warn "pm2 มีรายการซ้ำของโฟลเดอร์นี้ (id $OWNER_PM_ID) ถือพอร์ตด้วยตัวเก่า - เอาออก"
+            pm2_run delete "$OWNER_PM_ID" >/dev/null 2>&1
+        else
+            warn "โปรแกรมตัวเก่าค้างอยู่ (pid $OWNER_PID) ทั้งที่ pm2 หยุดตัวของมันแล้ว - หยุดตัวที่ค้าง"
+        fi
+        kill_tree "$OWNER_PID" TERM
+    elif [ -n "$OWNER_PM_ID" ]; then
         warn "หน้าเว็บมาจาก pm2 ของผู้ใช้ ${OWNER_USER:-?} ไม่ใช่ของ $(whoami) - ย้ายมาให้ pm2 ของ $(whoami) ดูแลที่เดียว"
         SUDO env PM2_HOME="$OWNER_PM2_HOME" PATH="$PATH" "$NODE" "$PM2_JS" delete "$OWNER_PM_ID" >/dev/null 2>&1
         SUDO env PM2_HOME="$OWNER_PM2_HOME" PATH="$PATH" "$NODE" "$PM2_JS" save --force >/dev/null 2>&1
@@ -402,7 +421,7 @@ take_over() {
     else
         warn "หน้าเว็บมาจากโปรแกรมที่เปิดไว้นอก pm2 (pid $OWNER_PID: $OWNER_CMD) - หยุดตัวนั้น ให้ pm2 ดูแลแทน"
         no_boot_start
-        SUDO kill "$OWNER_PID" 2>/dev/null || kill "$OWNER_PID" 2>/dev/null
+        kill_tree "$OWNER_PID" TERM
     fi
     for _ in $(seq 1 15); do
         port_owner || return 0
@@ -410,7 +429,7 @@ take_over() {
         sleep 1
     done
     warn "pid $was ยังไม่ปล่อยพอร์ต - บังคับหยุด"
-    SUDO kill -9 "$was" 2>/dev/null || kill -9 "$was" 2>/dev/null
+    kill_tree "$was" KILL
     sleep 2
     return 0
 }
@@ -423,21 +442,33 @@ pm2_boot() {
 }
 
 # Restart onto the files in $APP, under this user's pm2 and its name for it.
+#
+# Stop first, then check the port is free, then start: "pm2 restart" alone
+# reports success whether or not the old process actually let go.
 ocr_restart() {
-    take_over
     find_node
+    [ -n "${PM2_NAME:-}" ] && pm2_run stop "$PM2_NAME" >/dev/null 2>&1
     # another copy of the program in this pm2 can only fight the real one for
-    # the port and the camera - once the folder on the port is known, it goes
-    if [ -n "${SERVING_DIR:-}" ]; then
-        local id name cwd st
-        while IFS='|' read -r id name cwd st; do
-            [ -n "$id" ] && [ "$cwd" != "$APP" ] || continue
+    # the port and the camera: a second entry for this folder always goes,
+    # one for another folder once the folder on the port is known
+    local id name cwd st
+    while IFS='|' read -r id name cwd st; do
+        [ -n "$id" ] || continue
+        if [ "$cwd" = "$APP" ]; then
+            [ -n "${PM2_ID:-}" ] && [ "$id" != "$PM2_ID" ] || continue
+            warn "pm2 มีรายการซ้ำของ $APP ($name, id $id) - เอาออก เหลือรายการเดียว"
+        else
+            [ -n "${SERVING_DIR:-}" ] || continue
             warn "pm2 มีโปรแกรม OCR อีกชุด ($name จาก $cwd, $st) - เอาออก เหลือแค่ $APP"
-            pm2_run delete "$id" >/dev/null 2>&1
-        done <<EOF
+        fi
+        pm2_run delete "$id" >/dev/null 2>&1
+    done <<EOF
 $(pm2_ocr_apps)
 EOF
-    fi
+    take_over
+    # the page is compiled into server.js (inline-import) and babel's cache
+    # is keyed on server.js alone - no compiled copy of old code survives
+    rm -rf "$APP/node_modules/.cache/@babel/register" "$HOME/.babel.json" "$HOME"/.babel.*.json 2>/dev/null
     if [ -n "${PM2_NAME:-}" ]; then
         pm2_run restart "$PM2_NAME" >/dev/null 2>&1
     else
