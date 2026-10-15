@@ -79,12 +79,27 @@ for p in $PROTECTED; do
     rm -rf "${STAGE:?}/$p"          # never in the bundle, but if it ever is, it stops here
     EXCLUDES="$EXCLUDES --exclude=./$p"
 done
-# compared without carriage returns: a line-ending difference is not a new
-# dependency, and npm install costs five minutes and needs the proxy
-same_text() { cmp -s <(tr -d '\r' < "$1" 2>/dev/null) <(tr -d '\r' < "$2" 2>/dev/null); }
+# Does this update need npm install? Only when the dependencies themselves
+# change - compared as the lists declared in package.json, not as bytes.
+#
+# Byte comparison sent cameras installed before August to npm for nothing:
+# their package-lock.json differs from today's only in the registry URLs it
+# records, and npm install needs the internet, which several subnets do not
+# have - so the update failed on a camera that needed no new libraries.
+deps_of() {
+    python3 -c "import json,sys; d=json.load(open(sys.argv[1], encoding='utf-8')); print(json.dumps({k: d.get(k) or {} for k in ('dependencies','devDependencies','optionalDependencies')}, sort_keys=True))" "$1" 2>/dev/null
+}
 DEPS_CHANGED=0
-same_text "$STAGE/package.json" "$APP/package.json" || DEPS_CHANGED=1
-same_text "$STAGE/package-lock.json" "$APP/package-lock.json" || DEPS_CHANGED=1
+NEW_DEPS=$(deps_of "$STAGE/package.json")
+OLD_DEPS=$(deps_of "$APP/package.json")
+if [ -z "$NEW_DEPS" ] || [ "$NEW_DEPS" != "$OLD_DEPS" ]; then
+    DEPS_CHANGED=1
+    info "รายการไลบรารีใน package.json เปลี่ยน - จะต้อง npm install"
+fi
+if [ ! -d "$APP/node_modules" ]; then
+    DEPS_CHANGED=1
+    info "ไม่มี node_modules บนกล้อง - จะต้อง npm install"
+fi
 
 # which files this update really replaces, and which it adds
 ROLLBACK="$BACKUPS/.rollback-$STAMP"
@@ -167,11 +182,31 @@ rollback() {
 step "8/9 ไลบรารี"
 cd "$APP" || fail "เข้า $APP ไม่ได้"
 if [ "$DEPS_CHANGED" = "1" ]; then
-    info "package.json เปลี่ยน - ติดตั้งไลบรารีใหม่"
-    if ! npm install --no-audit --no-fund --legacy-peer-deps --loglevel=error; then
+    info "ติดตั้งไลบรารีใหม่ (ต้องออกเน็ต${PROXY:+ ผ่าน proxy $PROXY})"
+    NPM_LOG=/tmp/ocr-npm.log
+    if ! npm install --no-audit --no-fund --legacy-peer-deps --loglevel=error > "$NPM_LOG" 2>&1; then
+        tail -n 15 "$NPM_LOG"
+        # say which of the usual walls it hit, so the fix is obvious from the page
+        if grep -qE 'SELF_SIGNED_CERT|UNABLE_TO_GET_ISSUER|UNABLE_TO_VERIFY_LEAF|CERT_' "$NPM_LOG"; then
+            WHY="proxy ดักใบรับรอง TLS - npm ไม่เชื่อใบรับรองของ proxy"
+        elif grep -qE 'E407|Proxy Authentication' "$NPM_LOG"; then
+            WHY="proxy ต้องการชื่อผู้ใช้/รหัสผ่าน"
+        elif grep -qE 'E403|E401' "$NPM_LOG"; then
+            WHY="proxy หรือ registry ปฏิเสธ (403/401)"
+        elif grep -qE 'ETIMEDOUT|ECONNREFUSED|ECONNRESET|EAI_AGAIN|ENOTFOUND|ENETUNREACH' "$NPM_LOG"; then
+            if [ -n "${PROXY:-}" ]; then
+                WHY="กล้องออกเน็ตไม่ได้ทั้งที่ใช้ proxy $PROXY - proxy ถูกตัวไหม/วงนี้ใช้พอร์ตอื่นไหม"
+            else
+                WHY="กล้องออกเน็ตไม่ได้ และยังไม่ได้ตั้ง proxy ให้วงนี้"
+            fi
+        else
+            WHY="$(grep -m1 -E 'npm ERR!|npm error' "$NPM_LOG" | head -c 160)"
+        fi
+        rm -f "$NPM_LOG"
         rollback
-        fail "npm install ไม่ผ่าน - ถอยกลับเวอร์ชันเดิมแล้ว"
+        fail "npm install ไม่ผ่าน: $WHY - ถอยกลับเวอร์ชันเดิมแล้ว"
     fi
+    rm -f "$NPM_LOG"
     ok "ติดตั้งไลบรารีแล้ว"
 else
     ok "ไลบรารีเหมือนเดิม ข้ามขั้นนี้"
