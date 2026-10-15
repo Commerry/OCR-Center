@@ -1689,22 +1689,31 @@
     /*
      * Two versions per camera, and only both together say an update worked:
      *   on disk  - read by the scan from the program folder
-     *   running  - what the program reported in its last heartbeat; it reads
-     *              its version once, when it starts, so this changes only
-     *              after the camera has really been restarted onto the update
+     *   running  - what answers on the camera's port: asked by the scan
+     *              through /version, else the last heartbeat. The program
+     *              reads its version once, when it starts, so this changes
+     *              only once the camera really runs the update - an old copy
+     *              still holding the port keeps it old, whatever is on disk
      */
+    function runningOf(r) {
+      const p = r.probe || {};
+      if (p.running) return p.running;
+      // answered, but has no /version: a program from before it existed
+      if ('running' in p && p.web === '200') return 'ตัวเก่า (ไม่มี /version)';
+      return (r.known && r.known.running) || null;
+    }
+
     function updateState(r, bundle) {
       const p = r.probe || {};
-      const running = r.known && r.known.running;
+      const running = runningOf(r);
       if (!bundle) return ['muted', '-'];
       const want = bundle.sha.slice(0, 7);
       const disk = shaOf(p.version);
       const live = shaOf(running);
       if (disk !== want) return ['old', 'ต้องอัปเดต'];
       if (live === want) return ['ok', 'ล่าสุด กำลังรันแล้ว'];
-      if (!running) return ['installed', 'ไฟล์ใหม่แล้ว ยังไม่เห็น heartbeat'];
-      if (!live) return ['installed', 'ไฟล์ใหม่แล้ว รอกล้องรายงานเวอร์ชัน'];
-      return ['installed', 'ไฟล์ใหม่แล้ว แต่ยังรันตัวเก่า'];
+      if (!running) return ['installed', 'ไฟล์ใหม่แล้ว แต่ยังไม่มีโปรแกรมตอบ'];
+      return ['old', 'ไฟล์ใหม่แล้ว แต่ที่ตอบยังเป็นตัวเก่า - อัปเดตซ้ำ'];
     }
 
     function updatable() {
@@ -1723,14 +1732,19 @@
       const rows = list.map((r) => {
         const p = r.probe || {};
         const [cls, text] = updateState(r, bundle);
-        const running = r.known && r.known.running;
+        const running = runningOf(r);
         const checked = prov.sel.update.has(r.ip);
+        // the program on the port is run by something other than this
+        // user's pm2 (root's pm2, systemd, a terminal) - the usual reason a
+        // camera keeps showing the old page after its files were updated
+        const foreign = p.serving_by && p.serving_by.indexOf('pm2 ของ ' + (p.user || '')) !== 0;
         return '<tr class="click' + (checked ? ' sel' : '') + '" onclick="toggleSel(\'update\',\'' + r.ip + '\')">' +
           '<td><input type="checkbox" ' + (checked ? 'checked ' : '') + 'onclick="event.stopPropagation();toggleSel(\'update\',\'' + r.ip + '\')"></td>' +
           '<td>' + esc(r.ip) + '</td>' +
           '<td>' + esc(rowLabel(r)) +
             '<div class="step-text">' + esc((p.app_dir || '').replace(/^\/home\/[^/]+/, '~')) +
-            (p.pm2_name ? ' · pm2: ' + esc(p.pm2_name) : ' · ไม่ได้รันผ่าน pm2') + '</div></td>' +
+            (p.pm2_name ? ' · pm2: ' + esc(p.pm2_name) : ' · ไม่ได้รันผ่าน pm2') +
+            (foreign ? ' · ที่ตอบหน้าเว็บ: ' + esc(p.serving_by) : '') + '</div></td>' +
           '<td>' + esc(p.site || '-') + '</td>' +
           '<td>' + esc(p.version || '-') + '</td>' +
           '<td>' + esc(running || '-') + '</td>' +
@@ -1740,7 +1754,7 @@
       }).join('');
       box.innerHTML = '<table><thead><tr><th></th><th>IP</th><th>ชื่อเครื่อง</th><th>ไซต์</th>' +
         '<th title="อ่านจากโฟลเดอร์โปรแกรมบนกล้อง">ไฟล์บนกล้อง</th>' +
-        '<th title="ที่โปรแกรมกำลังรันรายงานมาใน heartbeat ล่าสุด">กำลังรัน</th>' +
+        '<th title="เวอร์ชันที่โปรแกรมบนพอร์ต 64010 ตอบตอนตรวจ (/version) หรือจาก heartbeat ล่าสุด">กำลังรัน</th>' +
         '<th>ผล</th><th>pm2 / เว็บ</th></tr></thead><tbody>' + rows + '</tbody></table>';
       updateUpdateButton();
     }

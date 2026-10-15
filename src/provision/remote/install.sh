@@ -141,8 +141,11 @@ SUDO systemctl restart avahi-daemon >/dev/null 2>&1
 ok "ประกาศตัวบนเครือข่าย: OCR-Display ($(hostname))"
 
 step "12/12 ตรวจผล"
-wait_web 90 || fail "โปรแกรมขึ้นแล้วแต่หน้าเว็บไม่ตอบใน 90 วินาที - ดู: pm2 logs ocr"
-ok "หน้าเว็บตอบ 200 ที่ http://$(hostname -I | awk '{print $1}'):64010"
+if ! wait_version "$BUNDLE_VERSION" 150; then
+    diagnose
+    fail "โปรแกรมไม่ขึ้นเป็นเวอร์ชัน $BUNDLE_VERSION ใน 150 วินาที (ที่ตอบอยู่: ${SEEN_VERSION:-ไม่มี}) - ดูส่วนวินิจฉัยใน log"
+fi
+ok "หน้าเว็บตอบเวอร์ชัน $BUNDLE_VERSION ที่ http://$(hostname -I | awk '{print $1}'):64010"
 rm -f /tmp/ocr-fw.tgz
 echo "@@VERSION $BUNDLE_VERSION"
 echo "@@OK"

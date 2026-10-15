@@ -32,6 +32,11 @@ need_sudo
 locate_app
 [ -n "$APP_FOUND" ] || fail "ไม่พบโปรแกรม OCR บนเครื่องนี้ - ใช้ 'ติดตั้งกล้องใหม่' แทน"
 ok "โปรแกรมอยู่ที่ $APP (pm2: ${PM2_NAME:-ไม่ได้รันผ่าน pm2})"
+if port_owner; then
+    info "ที่ตอบหน้าเว็บอยู่ตอนนี้: เวอร์ชัน $(running_version | grep . || echo 'รุ่นก่อนมี /version') จาก ${OWNER_CWD:-?} ($(owner_desc))"
+else
+    info "ตอนนี้ไม่มีโปรแกรมตอบที่พอร์ต 64010"
+fi
 [ -f "$APP/config.json" ] || fail "ไม่มี $APP/config.json - ไม่อัปเดตเพราะไม่มีอะไรให้ปกป้อง ตรวจเครื่องนี้ด้วยมือก่อน"
 # the download and its unpacked copy need about this much, and give it back.
 # A card that is short gets its logs and caches cleared first - full disks
@@ -232,11 +237,20 @@ step "9/9 รีสตาร์ทและตรวจผล"
 no_proxy_env
 ensure_redis
 ocr_restart
-if ! wait_web 90; then
+# done means the program answering on the port says it is the new build -
+# a page that answers 200 can be an old copy still holding the port
+if ! wait_version "$BUNDLE_VERSION" 150; then
     # what the new version said before it gave up, kept in the job log
     diagnose
+    if port_owner && [ "$OWNER_CWD" != "$APP" ]; then
+        WHY="พอร์ต 64010 ถูกโปรแกรมจากที่อื่นใช้อยู่ (${OWNER_CWD:-โฟลเดอร์อ่านไม่ได้} - $(owner_desc)) ไม่ใช่ $APP"
+    elif [ -n "$SEEN_VERSION" ] || port_owner; then
+        WHY="หน้าเว็บที่ตอบยังเป็นโปรแกรมตัวเก่า (${SEEN_VERSION:-รุ่นก่อนมี /version}) จาก ${OWNER_CWD:-?} - $(owner_desc)"
+    else
+        WHY="เวอร์ชันใหม่ไม่ขึ้นใน 150 วินาที"
+    fi
     rollback
-    fail "เวอร์ชันใหม่ไม่ขึ้นใน 90 วินาที - ถอยกลับเวอร์ชันเดิมแล้ว (ดูส่วนวินิจฉัยใน log)"
+    fail "$WHY - ถอยกลับเวอร์ชันเดิมแล้ว (ดูส่วนวินิจฉัยใน log)"
 fi
 pm2_run save --force >/dev/null 2>&1
 RESTORED=$(python3 - "$APP/config.json" "$SITE_JSON" <<'PYSITE'
@@ -252,11 +266,11 @@ PYSITE
 if [ "$RESTORED" = "yes" ]; then
     warn "มีคนบันทึกค่ากล้องระหว่างอัปเดต ชื่อไซต์หลุด - ใส่คืนแล้ว รีสตาร์ทอีกรอบ"
     ocr_restart
-    wait_web 60 || warn "รีสตาร์ทรอบสองแล้วหน้าเว็บยังไม่ขึ้น"
+    wait_version "$BUNDLE_VERSION" 90 || warn "รีสตาร์ทรอบสองแล้วยังไม่เห็นเวอร์ชันใหม่ตอบ"
 fi
 # it started: the files set aside for undoing are no longer needed
 forget_rollback
 rm -rf "$APP/node_modules.old"
-ok "หน้าเว็บตอบ 200 - ใช้ $BUNDLE_VERSION แล้ว / ที่เก็บไว้บนกล้อง: config.json + ชื่อไซต์เท่านั้น"
+ok "โปรแกรมที่ตอบหน้าเว็บรายงานเวอร์ชัน $BUNDLE_VERSION แล้ว (pm2: ${PM2_NAME:-?}) / ที่เก็บไว้บนกล้อง: config.json + ชื่อไซต์เท่านั้น"
 echo "@@VERSION $BUNDLE_VERSION"
 echo "@@OK"

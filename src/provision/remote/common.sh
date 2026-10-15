@@ -189,7 +189,12 @@ use_nm_cache() {
 diagnose() {
     echo "  ---- วินิจฉัย ----"
     echo "  ดิสก์ว่าง: $(free_mb) MB / redis: $(redis-cli ping 2>/dev/null || echo ไม่ตอบ)"
-    ss -tlnp 2>/dev/null | grep -q ':64010 ' && echo "  พอร์ต 64010: มีโปรแกรมฟังอยู่" || echo "  พอร์ต 64010: ไม่มีใครฟัง"
+    if port_owner; then
+        echo "  พอร์ต 64010: pid $OWNER_PID จาก ${OWNER_CWD:-โฟลเดอร์อ่านไม่ได้} - $(owner_desc)"
+        echo "  เวอร์ชันที่ตอบอยู่: $(running_version | grep . || echo 'ไม่บอก (โปรแกรมรุ่นก่อนมี /version)')"
+    else
+        echo "  พอร์ต 64010: ไม่มีใครฟัง"
+    fi
     if [ -n "${PM2_NAME:-}" ]; then
         pm2_run logs "$PM2_NAME" --nostream --lines 20 --err 2>/dev/null | tail -n 20 | sed 's/^/  | /'
     fi
@@ -224,35 +229,64 @@ pm2_run() {
 # where, recognise the program by its package.json, and only then fall back
 # to looking in the usual folders.
 #
+# The folder that actually answers on the port comes first, though: pm2 is
+# not the only way the program was started in this fleet (root's pm2, a
+# systemd unit, a crontab line), and updating a copy that is not the one
+# running changes nothing anyone sees.
+#
 # Sets APP_FOUND (empty when there is no program), APP, PM2_NAME (empty when
-# pm2 does not run it) and IN_PM2 (yes/no).
+# pm2 does not run it), IN_PM2 (yes/no) and SERVING_DIR (the folder of the
+# program on the port, empty when nothing recognisable answers).
 OCR_PKG_NAME="sritrang-ocr"
 is_ocr_dir() {
-    [ -f "$1/package.json" ] && grep -q "\"name\": *\"$OCR_PKG_NAME\"" "$1/package.json" 2>/dev/null
+    [ -n "$1" ] || return 1
+    if [ -f "$1/package.json" ] && grep -q "\"name\": *\"$OCR_PKG_NAME\"" "$1/package.json" 2>/dev/null; then
+        return 0
+    fi
+    # copies older than the package name still have the program's shape
+    [ -f "$1/src/server.js" ] && [ -f "$1/python/main.py" ]
 }
+
+# The OCR programs in this user's pm2, one "id|name|folder|status" per line.
+pm2_ocr_apps() {
+    [ -n "${NODE:-}" ] && [ -n "${PM2_JS:-}" ] || return 0
+    "$NODE" "$PM2_JS" jlist 2>/dev/null | "$NODE" -e '
+      const fs = require("fs"), path = require("path");
+      const ocr = (d) => {
+        try {
+          if (JSON.parse(fs.readFileSync(path.join(d, "package.json"), "utf8")).name === process.argv[1]) return true;
+        } catch (e) { /* not a node app folder */ }
+        return fs.existsSync(path.join(d, "src/server.js")) && fs.existsSync(path.join(d, "python/main.py"));
+      };
+      let s = ""; process.stdin.on("data", (d) => { s += d; }).on("end", () => {
+        let apps = [];
+        try { apps = JSON.parse(s); } catch (e) { return; }
+        for (const a of apps) {
+          const e = a.pm2_env || {};
+          const cwd = String(e.pm_cwd || "").replace(/\/$/, "");
+          if (cwd && ocr(cwd)) console.log([a.pm_id, a.name, cwd, e.status].join("|"));
+        }
+      });' "$OCR_PKG_NAME" 2>/dev/null
+}
+
 locate_app() {
-    APP_FOUND=""; PM2_NAME=""; IN_PM2=no
+    APP_FOUND=""; PM2_NAME=""; IN_PM2=no; SERVING_DIR=""
     find_node
-    if [ -n "$NODE" ] && [ -n "$PM2_JS" ]; then
-        LINE=$("$NODE" "$PM2_JS" jlist 2>/dev/null | "$NODE" -e '
-          const fs = require("fs"), path = require("path");
-          let s = ""; process.stdin.on("data", (d) => { s += d; }).on("end", () => {
-            let apps = [];
-            try { apps = JSON.parse(s); } catch (e) { return; }
-            for (const a of apps) {
-              const cwd = a.pm2_env && a.pm2_env.pm_cwd;
-              if (!cwd) continue;
-              try {
-                const pkg = JSON.parse(fs.readFileSync(path.join(cwd, "package.json"), "utf8"));
-                if (pkg.name === process.argv[1]) { console.log(a.name + "|" + cwd.replace(/\/$/, "")); return; }
-              } catch (e) { /* not a node app folder */ }
-            }
-          });' "$OCR_PKG_NAME" 2>/dev/null)
-        if [ -n "$LINE" ]; then
-            PM2_NAME="${LINE%%|*}"
-            APP_FOUND="${LINE#*|}"
-            IN_PM2=yes
-        fi
+    if port_owner && is_ocr_dir "$OWNER_CWD"; then
+        SERVING_DIR="${OWNER_CWD%/}"
+    fi
+    local apps line=""
+    apps=$(pm2_ocr_apps)
+    if [ -n "$SERVING_DIR" ]; then
+        APP_FOUND="$SERVING_DIR"
+        line=$(printf '%s\n' "$apps" | awk -F'|' -v d="$SERVING_DIR" '$3 == d { print; exit }')
+    else
+        line=$(printf '%s\n' "$apps" | grep . | head -1)
+        [ -n "$line" ] && APP_FOUND=$(printf '%s' "$line" | cut -d'|' -f3)
+    fi
+    if [ -n "$line" ]; then
+        PM2_NAME=$(printf '%s' "$line" | cut -d'|' -f2)
+        IN_PM2=yes
     fi
     if [ -z "$APP_FOUND" ]; then
         for d in "$HOME/Desktop/OCR-V8.1" "$HOME"/Desktop/OCR* "$HOME"/OCR* "$HOME"/Desktop/*/ "$HOME"/*/; do
@@ -261,16 +295,175 @@ locate_app() {
         done
     fi
     [ -n "$APP_FOUND" ] && APP="$APP_FOUND"
-    export APP PM2_NAME IN_PM2 APP_FOUND
+    export APP PM2_NAME IN_PM2 APP_FOUND SERVING_DIR
 }
 
-# pm2 knows the program under the name it was started with - restart by that
+# Who answers on the OCR port: the pid, its folder, and what keeps it going -
+# a pm2 (pm_id and PM2_HOME are in the environment of everything pm2 starts),
+# a systemd unit (its cgroup), or nothing (a terminal, cron, rc.local).
+# Returns 1 when nothing listens.
+port_owner() {
+    OWNER_PID=""; OWNER_CWD=""; OWNER_USER=""; OWNER_CMD=""; OWNER_UNIT=""; OWNER_PM_ID=""; OWNER_PM2_HOME=""
+    local line envs
+    # as root when possible: without it ss hides other users' processes
+    line=$({ SUDO ss -tlnp 2>/dev/null || ss -tlnp 2>/dev/null; } | grep -E '[:.]64010[[:space:]]' | head -1)
+    OWNER_PID=$(printf '%s' "$line" | sed -n 's/.*pid=\([0-9][0-9]*\).*/\1/p')
+    [ -n "$OWNER_PID" ] || return 1
+    OWNER_CWD=$(SUDO readlink "/proc/$OWNER_PID/cwd" 2>/dev/null || readlink "/proc/$OWNER_PID/cwd" 2>/dev/null)
+    OWNER_CWD="${OWNER_CWD%/}"
+    OWNER_USER=$(ps -o user= -p "$OWNER_PID" 2>/dev/null | tr -d ' ')
+    OWNER_CMD=$(tr '\0' ' ' < "/proc/$OWNER_PID/cmdline" 2>/dev/null | cut -c1-160)
+    OWNER_UNIT=$(grep -o '[^/]*\.service' "/proc/$OWNER_PID/cgroup" 2>/dev/null | tail -1)
+    envs=$({ SUDO cat "/proc/$OWNER_PID/environ" 2>/dev/null || cat "/proc/$OWNER_PID/environ" 2>/dev/null; } | tr '\0' '\n')
+    OWNER_PM_ID=$(printf '%s\n' "$envs" | sed -n 's/^pm_id=//p' | head -1)
+    OWNER_PM2_HOME=$(printf '%s\n' "$envs" | sed -n 's/^PM2_HOME=//p' | head -1)
+    if [ -n "$OWNER_PM_ID" ] && [ -z "$OWNER_PM2_HOME" ]; then
+        OWNER_PM2_HOME="$(getent passwd "${OWNER_USER:-x}" | cut -d: -f6)/.pm2"
+    fi
+    return 0
+}
+
+# a systemd unit written to run the OCR program - never cron, ssh, a login...
+ocr_unit() {
+    case "$1" in
+        pm2-*|cron.service|rc-local.service|ssh.service|sshd.service|user@*|lightdm.service|getty@*|serial-getty@*|display-manager.service) return 1 ;;
+    esac
+    systemctl cat "$1" 2>/dev/null | grep -qE 'server\.js|babel-node|npm|OCR'
+}
+
+owner_desc() {
+    if [ -n "$OWNER_PM_ID" ] && [ "$OWNER_PM2_HOME" = "$HOME/.pm2" ]; then
+        echo "pm2 ของ $(whoami)"
+    elif [ -n "$OWNER_PM_ID" ]; then
+        echo "pm2 ของผู้ใช้ ${OWNER_USER:-?} ($OWNER_PM2_HOME)"
+    elif [ -n "$OWNER_UNIT" ] && ocr_unit "$OWNER_UNIT"; then
+        echo "systemd $OWNER_UNIT"
+    else
+        echo "เปิดไว้นอก pm2: ${OWNER_CMD:-?}"
+    fi
+}
+
+# Comment out the boot-time lines that start the program outside pm2 -
+# crontab @reboot (this user's and root's), /etc/rc.local, desktop autostart.
+# Kiosk browsers pointed at the page are left alone: they name the port, not
+# the program. A starter this misses is no disaster: it starts the same
+# folder, which now holds the new files - pm2 just loses the race for the port.
+no_boot_start() {
+    local pat cur tmp f
+    pat="(server[.]js|babel-node|npm (run )?start)"
+    off() { awk -v pat="$1" '!/^[[:space:]]*#/ && $0 ~ pat { print "#ocr-center-off# " $0; next } { print }'; }
+    cur=$(crontab -l 2>/dev/null)
+    if printf '%s\n' "$cur" | grep -v '^[[:space:]]*#' | grep -qE "@reboot.*$pat"; then
+        printf '%s\n' "$cur" | off "@reboot.*$pat" | crontab - && warn "ปิดบรรทัด @reboot ใน crontab ของ $(whoami) ที่เปิดโปรแกรมซ้ำ"
+    fi
+    cur=$(SUDO crontab -l -u root 2>/dev/null)
+    if printf '%s\n' "$cur" | grep -v '^[[:space:]]*#' | grep -qE "@reboot.*$pat"; then
+        tmp=$(mktemp)
+        printf '%s\n' "$cur" | off "@reboot.*$pat" > "$tmp"
+        SUDO crontab -u root "$tmp" && warn "ปิดบรรทัด @reboot ใน crontab ของ root ที่เปิดโปรแกรมซ้ำ"
+        rm -f "$tmp"
+    fi
+    if [ -f /etc/rc.local ] && grep -v '^[[:space:]]*#' /etc/rc.local | grep -qE "$pat"; then
+        off "$pat" < /etc/rc.local | sudo_write /etc/rc.local && SUDO chmod 755 /etc/rc.local \
+            && warn "ปิดบรรทัดใน /etc/rc.local ที่เปิดโปรแกรมซ้ำ"
+    fi
+    for f in "$HOME"/.config/autostart/*.desktop; do
+        [ -f "$f" ] && grep -E '^Exec=' "$f" | grep -qE "$pat" || continue
+        mv "$f" "$f.ocr-center-off" && warn "ปิด autostart $(basename "$f") ที่เปิดโปรแกรมซ้ำ"
+    done
+}
+
+# Leave the OCR port to this user's pm2 running $APP, and to nothing else.
+#
+# A pm2 restart only restarts what that pm2 runs. A camera whose program had
+# been started some other way kept the old copy on the port: the restarted
+# one died on "address in use", the old one went on answering 200, and the
+# update looked done while the page never changed. Whatever else holds the
+# port for this same folder is stopped here, and kept from coming back at
+# boot. Something from another folder is left alone - which config is the
+# real one is not a guess to make for the operator.
+take_over() {
+    port_owner || return 0
+    if [ "$OWNER_CWD" != "$APP" ]; then
+        warn "พอร์ต 64010 ถูกใช้โดย pid $OWNER_PID จาก ${OWNER_CWD:-โฟลเดอร์ที่อ่านไม่ได้} ไม่ใช่ $APP - ไม่หยุดให้เอง"
+        return 1
+    fi
+    if [ -n "$OWNER_PM_ID" ] && [ "$OWNER_PM2_HOME" = "$HOME/.pm2" ]; then
+        return 0      # ours: the restart that follows is all it needs
+    fi
+    local was="$OWNER_PID"
+    if [ -n "$OWNER_PM_ID" ]; then
+        warn "หน้าเว็บมาจาก pm2 ของผู้ใช้ ${OWNER_USER:-?} ไม่ใช่ของ $(whoami) - ย้ายมาให้ pm2 ของ $(whoami) ดูแลที่เดียว"
+        SUDO env PM2_HOME="$OWNER_PM2_HOME" PATH="$PATH" "$NODE" "$PM2_JS" delete "$OWNER_PM_ID" >/dev/null 2>&1
+        SUDO env PM2_HOME="$OWNER_PM2_HOME" PATH="$PATH" "$NODE" "$PM2_JS" save --force >/dev/null 2>&1
+    elif [ -n "$OWNER_UNIT" ] && ocr_unit "$OWNER_UNIT"; then
+        warn "หน้าเว็บมาจาก systemd $OWNER_UNIT - ปิดตัวนั้น ให้ pm2 ดูแลแทน"
+        SUDO systemctl disable --now "$OWNER_UNIT" >/dev/null 2>&1
+    else
+        warn "หน้าเว็บมาจากโปรแกรมที่เปิดไว้นอก pm2 (pid $OWNER_PID: $OWNER_CMD) - หยุดตัวนั้น ให้ pm2 ดูแลแทน"
+        no_boot_start
+        SUDO kill "$OWNER_PID" 2>/dev/null || kill "$OWNER_PID" 2>/dev/null
+    fi
+    for _ in $(seq 1 15); do
+        port_owner || return 0
+        [ "$OWNER_PID" != "$was" ] && return 0
+        sleep 1
+    done
+    warn "pid $was ยังไม่ปล่อยพอร์ต - บังคับหยุด"
+    SUDO kill -9 "$was" 2>/dev/null || kill -9 "$was" 2>/dev/null
+    sleep 2
+    return 0
+}
+
+# pm2 starts the program at boot only once its own startup unit is enabled
+pm2_boot() {
+    systemctl is-enabled "pm2-$(whoami)" >/dev/null 2>&1 && return 0
+    SUDO env PATH="$PATH" "$NODE" "$PM2_JS" startup systemd -u "$(whoami)" --hp "$HOME" >/dev/null 2>&1 \
+        && ok "ตั้งให้ pm2 ของ $(whoami) เปิดโปรแกรมเองตอนบูต" || warn "ตั้ง pm2 startup ไม่สำเร็จ"
+}
+
+# Restart onto the files in $APP, under this user's pm2 and its name for it.
 ocr_restart() {
+    take_over
+    find_node
+    # another copy of the program in this pm2 can only fight the real one for
+    # the port and the camera - once the folder on the port is known, it goes
+    if [ -n "${SERVING_DIR:-}" ]; then
+        local id name cwd st
+        while IFS='|' read -r id name cwd st; do
+            [ -n "$id" ] && [ "$cwd" != "$APP" ] || continue
+            warn "pm2 มีโปรแกรม OCR อีกชุด ($name จาก $cwd, $st) - เอาออก เหลือแค่ $APP"
+            pm2_run delete "$id" >/dev/null 2>&1
+        done <<EOF
+$(pm2_ocr_apps)
+EOF
+    fi
     if [ -n "${PM2_NAME:-}" ]; then
         pm2_run restart "$PM2_NAME" >/dev/null 2>&1
     else
         (cd "$APP" && pm2_run start ecosystem.config.js >/dev/null 2>&1)
+        PM2_NAME=$(pm2_ocr_apps | awk -F'|' -v d="$APP" '$3 == d { print $2; exit }')
+        [ -n "$PM2_NAME" ] && IN_PM2=yes && pm2_boot
     fi
+}
+
+# The build the program on the port says it is. Empty when nothing answers -
+# and also for programs from before the /version route, which answer /login
+# with 200 all the same. That is why a 200 alone never proves an update runs.
+running_version() {
+    curl -s --noproxy '*' -m 3 http://127.0.0.1:64010/version 2>/dev/null \
+        | sed -n 's/.*"version" *: *"\([^"]*\)".*/\1/p' | head -1
+}
+
+# wait until the program on the port reports the given build
+wait_version() {
+    SEEN_VERSION=""
+    for _ in $(seq 1 "${2:-150}"); do
+        SEEN_VERSION=$(running_version)
+        [ "$SEEN_VERSION" = "$1" ] && return 0
+        sleep 1
+    done
+    return 1
 }
 
 wait_web() {

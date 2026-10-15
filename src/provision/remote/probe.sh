@@ -54,6 +54,14 @@ if [ "$IN_PM2" = "yes" ]; then
 else
     kv pm2 none
 fi
+# what really answers on the port - the build it reports (empty for programs
+# older than /version) and where it runs from. Files on disk can be new while
+# an old copy started some other way still holds the port.
+kv running "$(running_version)"
+if port_owner; then
+    kv serving_dir "$OWNER_CWD"
+    kv serving_by "$(owner_desc)"
+fi
 kv node "$( [ -n "${NODE:-}" ] && "$NODE" -v 2>/dev/null || echo none)"
 kv web "$(curl -s --noproxy '*' -o /dev/null -m 4 -w '%{http_code}' http://127.0.0.1:64010/login 2>/dev/null || echo 000)"
 kv done 1
